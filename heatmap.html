@@ -1,0 +1,904 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>CDR Heatmap Analyzer</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://unpkg.com/leaflet.heat@0.2.0/dist/leaflet-heat.js"></script>
+<style>
+:root {
+  --bg:#f7f4ef; --ink:#1b2631; --muted:#5d6d7e; --line:#d5d8dc; --accent:#1a5276; --blue:#2980b9;
+}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%;background:var(--bg);color:var(--ink);font-family:"Segoe UI",Tahoma,sans-serif;overflow:hidden}
+#app{display:grid;grid-template-columns:360px 1fr;height:100vh;height:100dvh}
+aside{border-right:1px solid var(--line);background:linear-gradient(180deg,#fff,#f4f1ea);padding:12px;overflow:auto;z-index:2;-webkit-overflow-scrolling:touch}
+h1{font-size:15px;margin:0 0 4px}
+.sub{font-size:11px;color:var(--muted);margin-bottom:10px;line-height:1.35}
+.navlinks a{font-size:12px;color:var(--accent);font-weight:600;text-decoration:none}
+.navlinks a:hover{text-decoration:underline}
+.box{background:#fff;border:1px solid var(--line);border-radius:8px;padding:10px;margin-bottom:10px}
+.box h2{font-size:12px;margin:0 0 8px;color:var(--accent)}
+.row{display:grid;gap:4px;margin-bottom:7px;font-size:11px}
+label{color:var(--muted)}
+.chk{display:flex;gap:8px;align-items:center;color:var(--ink);font-size:12px;margin:6px 0;cursor:pointer}
+input,select,button{font:inherit}
+input[type=datetime-local],select{
+  width:100%;border:1px solid var(--line);border-radius:6px;padding:6px 8px;font-size:12px;background:#fff
+}
+button{border:1px solid #aeb6bf;background:#fff;border-radius:8px;padding:7px 10px;font-size:12px;cursor:pointer}
+button:hover{background:#f2f4f6}
+button.primary{background:#1b2631;color:#fff;border-color:#1b2631}
+button:disabled{opacity:.55;cursor:not-allowed}
+.btns{display:flex;gap:6px;flex-wrap:wrap}
+.btns button{flex:1}
+.hint{font-size:10px;color:var(--muted);line-height:1.35;margin-top:6px}
+.stat{display:grid;grid-template-columns:1fr auto;gap:4px 8px;font-size:11px}
+.stat b{font-variant-numeric:tabular-nums}
+.progress-wrap{display:none;margin-top:8px}
+.progress-wrap.on{display:block}
+.progress{
+  height:10px;background:#e8ecef;border-radius:999px;overflow:hidden;border:1px solid var(--line)
+}
+.progress > i{
+  display:block;height:100%;width:0%;background:linear-gradient(90deg,#2980b9,#1a5276);
+  transition:width .2s ease
+}
+.progress-meta{display:flex;justify-content:space-between;gap:8px;font-size:10px;color:var(--muted);margin-top:4px}
+#map{width:100%;height:100%;background:#dfe6e9}
+#status{
+  position:absolute;left:12px;bottom:12px;z-index:500;max-width:min(560px,90vw);
+  background:#ffffffee;border:1px solid var(--line);border-radius:8px;padding:8px 10px;font-size:11px;color:var(--muted);
+  box-shadow:0 2px 10px rgba(0,0,0,.08)
+}
+#btnPanel,#panelScrim{display:none}
+#btnPanel{
+  position:absolute;top:12px;left:12px;z-index:600;
+  border:1px solid #aeb6bf;background:#fff;border-radius:8px;padding:8px 12px;font-size:13px;font-weight:600;cursor:pointer;
+  box-shadow:0 2px 8px rgba(0,0,0,.08)
+}
+.aside-head{display:none}
+main{position:relative;min-width:0;min-height:0}
+.path-step{border-left:3px solid #2980b9;padding:4px 0 4px 8px;margin:0 0 6px;font-size:11px}
+.path-step .t{color:var(--muted)}
+#logModal{display:none;position:fixed;inset:0;z-index:900;background:rgba(20,28,36,.45);align-items:center;justify-content:center;padding:16px}
+#logModal.open{display:flex}
+.modal-card{width:min(1100px,96vw);max-height:88vh;background:#fff;border-radius:12px;border:1px solid #d5d8dc;box-shadow:0 18px 50px rgba(0,0,0,.28);display:flex;flex-direction:column;overflow:hidden}
+.modal-head{display:flex;gap:12px;justify-content:space-between;padding:14px 16px;border-bottom:1px solid #e5e8eb;background:linear-gradient(180deg,#fff,#f7f4ef)}
+.modal-head h3{margin:0 0 4px;font-size:15px}
+.modal-head .meta{font-size:11px;color:var(--muted);line-height:1.4}
+.modal-tools{display:flex;gap:8px;padding:10px 16px;border-bottom:1px solid #eee;background:#fafafa}
+.modal-tools input{flex:1;border:1px solid var(--line);border-radius:6px;padding:6px 8px;font-size:12px}
+.modal-body{overflow:auto;-webkit-overflow-scrolling:touch}
+.modal-body table{width:100%;border-collapse:collapse;font-size:11px}
+.modal-body th{position:sticky;top:0;background:#1b2631;color:#fff;text-align:left;padding:8px;white-space:nowrap}
+.modal-body td{padding:6px 8px;border-bottom:1px solid #eef1f4;vertical-align:top;max-width:200px;word-break:break-word}
+.modal-body tr:nth-child(even) td{background:#fafbfc}
+@media (max-width:900px){
+  #app{grid-template-columns:1fr}
+  aside{
+    position:fixed;inset:0 auto 0 0;width:min(360px,92vw);transform:translateX(-105%);
+    transition:transform .22s ease;z-index:700;padding-top:0
+  }
+  #app.panel-open aside{transform:translateX(0);box-shadow:10px 0 32px rgba(0,0,0,.22)}
+  .aside-head{
+    display:flex;align-items:center;justify-content:space-between;gap:10px;
+    position:sticky;top:0;z-index:2;margin:0 -12px 10px;padding:12px;
+    background:linear-gradient(180deg,#fff,#f4f1ea);border-bottom:1px solid var(--line)
+  }
+  .aside-head h1{margin:0;font-size:15px}
+  .aside-title-desktop{display:none}
+  #btnClosePanel{
+    display:inline-flex;align-items:center;justify-content:center;width:36px;height:36px;
+    border-radius:10px;border:1px solid #aeb6bf;background:#fff;font-size:20px;font-weight:700;cursor:pointer
+  }
+  #btnPanel{display:inline-flex}
+  #app.panel-open #btnPanel{visibility:hidden}
+  #panelScrim{display:none;position:fixed;inset:0;background:rgba(20,28,36,.42);z-index:650;border:0}
+  #app.panel-open #panelScrim{display:block}
+  #status{left:12px;right:12px;max-width:none}
+}
+</style>
+</head>
+<body>
+<button id="panelScrim" type="button" aria-label="Close panel"></button>
+<div id="app">
+  <aside id="sidePanel">
+    <div class="aside-head">
+      <h1>CDR Heatmap</h1>
+      <button id="btnClosePanel" type="button" aria-label="Hide sidebar">×</button>
+    </div>
+    <h1 class="aside-title-desktop">CDR Heatmap Analyzer</h1>
+    <div class="sub">Uses mapped CDR data from the i2 Analyzer (IndexedDB). Prefers latitude/longitude; otherwise geocodes address via OpenStreetMap.</div>
+    <div class="navlinks" style="margin-bottom:10px">
+      <a href="index.html">← Back to CDR i2 Analyzer</a>
+    </div>
+
+    <div class="box">
+      <h2>Workspace</h2>
+      <div class="stat">
+        <span>Mapped files</span><b id="wsFiles">0</b>
+        <span>Records</span><b id="wsRecs">0</b>
+        <span>With coords</span><b id="wsCoords">0</b>
+        <span>Need address geocode</span><b id="wsAddr">0</b>
+        <span>No location</span><b id="wsNone">0</b>
+      </div>
+      <div class="btns" style="margin-top:8px">
+        <button id="btnLoad" class="primary" type="button">Load storage</button>
+        <button id="btnBuild" type="button">Build / refresh map</button>
+      </div>
+      <div class="hint" id="loadHint">Load the same IndexedDB workspace saved by the analyzer.</div>
+    </div>
+
+    <div class="box">
+      <h2>Filters</h2>
+      <div class="row"><label>From</label><input id="dtFrom" type="datetime-local"/></div>
+      <div class="row"><label>To</label><input id="dtTo" type="datetime-local"/></div>
+      <div class="row"><label>Subject / target</label><select id="selTarget"><option value="">All subjects</option></select></div>
+      <div class="row"><label>Intensity</label>
+        <select id="selIntensity">
+          <option value="count">Event count</option>
+          <option value="duration">Call duration</option>
+        </select>
+      </div>
+      <label class="chk"><input type="checkbox" id="chkHeat" checked> Show heatmap</label>
+      <div class="btns">
+        <button id="btnApply" class="primary" type="button">Apply</button>
+        <button id="btnGeocode" type="button">Geocode addresses</button>
+      </div>
+      <div class="progress-wrap" id="geoProgressWrap">
+        <div class="progress"><i id="geoProgressBar"></i></div>
+        <div class="progress-meta">
+          <span id="geoProgressText">0 / 0</span>
+          <span id="geoProgressPct">0%</span>
+        </div>
+      </div>
+      <div class="hint" id="geoHint">Geocoding uses Nominatim (1 request/sec, cached). Bangladesh bias applied.</div>
+    </div>
+
+    <div class="box">
+      <h2>A-Party location path (time frame)</h2>
+      <div class="row"><label>A-Party</label><select id="selAparty"><option value="">Select A-Party…</option></select></div>
+      <label class="chk"><input type="checkbox" id="chkPathSelected" checked> Draw selected A-Party path</label>
+      <label class="chk"><input type="checkbox" id="chkPathAll"> Show all A-Party paths (color-coded)</label>
+      <div class="btns">
+        <button id="btnDrawPath" class="primary" type="button">Draw / refresh paths</button>
+        <button id="btnClearPath" type="button">Clear paths</button>
+      </div>
+      <div class="hint">Chronological from→to lines by event time within the selected date range. Start = green, end = red.</div>
+      <div id="pathTimeline" style="margin-top:8px;max-height:240px;overflow:auto"></div>
+    </div>
+
+    <div class="box">
+      <h2>Top locations</h2>
+      <div id="topList" style="font-size:11px;max-height:180px;overflow:auto;line-height:1.45;color:var(--ink)">Load data first.</div>
+    </div>
+  </aside>
+
+  <main>
+    <button id="btnPanel" type="button">☰ Panel</button>
+    <div id="map"></div>
+    <div id="status">Heatmap ready — load analyzer workspace to begin.</div>
+  </main>
+</div>
+
+<div id="logModal">
+  <div class="modal-card">
+    <div class="modal-head">
+      <div>
+        <h3 id="modalTitle">Location CDR logs</h3>
+        <div class="meta" id="modalMeta"></div>
+      </div>
+      <button id="btnCloseModal" type="button">Close</button>
+    </div>
+    <div class="modal-tools">
+      <input id="modalFilter" type="search" placeholder="Filter logs…"/>
+      <button id="btnExportLocCsv" type="button">Export CSV</button>
+    </div>
+    <div class="modal-body">
+      <table>
+        <thead>
+          <tr>
+            <th>#</th><th>Date Time</th><th>Duration</th><th>Usage</th>
+            <th>A-Party</th><th>B-Party</th><th>Network</th><th>Provider</th>
+            <th>IMEI</th><th>LAC/CI</th><th>Address</th><th>Source</th>
+          </tr>
+        </thead>
+        <tbody id="modalRows"></tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<script>
+(function () {
+  'use strict';
+
+  const IDB_NAME = 'cdr_i2_analyzer_db';
+  const IDB_STORE = 'workspace';
+  const IDB_KEY = 'datasets_v2';
+  const GEO_CACHE_KEY = 'cdr_heatmap_geocode_v1';
+  const REC_COLS = ['start','aparty','bparty','duration','usage','usage_class','provider','network','imei','imsi','lac','ci','address','source','sheet','target','lat','lng'];
+  const PATH_COLORS = ['#c0392b','#2980b9','#27ae60','#8e44ad','#d35400','#16a085','#2c3e50','#e67e22','#1abc9c','#9b59b6'];
+
+  const state = {
+    datasets: [],
+    records: [],
+    map: null,
+    heat: null,
+    markers: null,
+    paths: null,
+    geoCache: {},
+    geocoding: false,
+    modalLogs: [],
+  };
+
+  function $(id){ return document.getElementById(id); }
+  function setStatus(msg){ $('status').textContent = msg; }
+
+  function openDb() {
+    return new Promise((resolve, reject) => {
+      const req = indexedDB.open(IDB_NAME, 1);
+      req.onupgradeneeded = () => {
+        const db = req.result;
+        if (!db.objectStoreNames.contains(IDB_STORE)) db.createObjectStore(IDB_STORE);
+      };
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error);
+    });
+  }
+  async function idbGet() {
+    const db = await openDb();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(IDB_STORE, 'readonly');
+      const req = tx.objectStore(IDB_STORE).get(IDB_KEY);
+      req.onsuccess = () => resolve(req.result || null);
+      req.onerror = () => reject(req.error);
+    });
+  }
+
+  function unpackRecord(row) {
+    if (!Array.isArray(row)) {
+      return Object.assign({}, row, {
+        start: row.start ? new Date(row.start) : null,
+        lat: row.lat != null && row.lat !== '' ? Number(row.lat) : null,
+        lng: row.lng != null && row.lng !== '' ? Number(row.lng) : null,
+      });
+    }
+    const o = {};
+    REC_COLS.forEach((k, i) => { o[k] = row[i]; });
+    o.start = (typeof o.start === 'number' && o.start > 0) ? new Date(o.start * 1000) : null;
+    o.duration = Number(o.duration || 0);
+    o.lat = (o.lat !== '' && o.lat != null && !isNaN(Number(o.lat))) ? Number(o.lat) : null;
+    o.lng = (o.lng !== '' && o.lng != null && !isNaN(Number(o.lng))) ? Number(o.lng) : null;
+    return o;
+  }
+
+  function parseLatLngFromText(text) {
+    const s = String(text || '').trim();
+    if (!s) return null;
+    let m = s.match(/(-?\d{1,2}\.\d+)\s*[,;\s]\s*(-?\d{1,3}\.\d+)/);
+    if (m) {
+      const a = parseFloat(m[1]), b = parseFloat(m[2]);
+      if (Math.abs(a) <= 90 && Math.abs(b) <= 180) return { lat: a, lng: b };
+      if (Math.abs(b) <= 90 && Math.abs(a) <= 180) return { lat: b, lng: a };
+    }
+    m = s.match(/lat(?:itude)?\s*[:=]\s*(-?\d+\.?\d*)/i);
+    const m2 = s.match(/l(?:ng|on|ongitude)\s*[:=]\s*(-?\d+\.?\d*)/i);
+    if (m && m2) {
+      const lat = parseFloat(m[1]), lng = parseFloat(m2[1]);
+      if (isFinite(lat) && isFinite(lng)) return { lat, lng };
+    }
+    return null;
+  }
+
+  function loadGeoCache() {
+    try { state.geoCache = JSON.parse(localStorage.getItem(GEO_CACHE_KEY) || '{}') || {}; }
+    catch (_) { state.geoCache = {}; }
+  }
+  function saveGeoCache() {
+    try { localStorage.setItem(GEO_CACHE_KEY, JSON.stringify(state.geoCache)); } catch (_) {}
+  }
+
+  function addrKey(addr) {
+    return String(addr || '').trim().replace(/\s+/g, ' ').toUpperCase();
+  }
+
+  function resolveCoords(rec) {
+    let lat = rec.lat, lng = rec.lng;
+    if (lat != null && lng != null && isFinite(lat) && isFinite(lng) && Math.abs(lat) <= 90 && Math.abs(lng) <= 180) {
+      return { lat, lng, source: 'coords' };
+    }
+    const parsed = parseLatLngFromText(rec.address || '');
+    if (parsed) return { lat: parsed.lat, lng: parsed.lng, source: 'parsed' };
+    const key = addrKey(rec.address);
+    if (key && state.geoCache[key] && state.geoCache[key].lat != null) {
+      return { lat: state.geoCache[key].lat, lng: state.geoCache[key].lng, source: 'geocode' };
+    }
+    return null;
+  }
+
+  function setGeoProgress(done, total, label) {
+    const wrap = $('geoProgressWrap');
+    const pct = total ? Math.round((done / total) * 100) : 0;
+    wrap.classList.add('on');
+    $('geoProgressBar').style.width = pct + '%';
+    $('geoProgressText').textContent = (label || (done + ' / ' + total));
+    $('geoProgressPct').textContent = pct + '%';
+  }
+  function hideGeoProgress() {
+    $('geoProgressWrap').classList.remove('on');
+    $('geoProgressBar').style.width = '0%';
+  }
+
+  function colorForAparty(a) {
+    let h = 0;
+    const s = String(a || '');
+    for (let i = 0; i < s.length; i++) h = ((h << 5) - h) + s.charCodeAt(i);
+    return PATH_COLORS[Math.abs(h) % PATH_COLORS.length];
+  }
+
+  function fmtDt(d) {
+    if (!d || isNaN(d)) return '-';
+    const pad = n => String(n).padStart(2,'0');
+    return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+  }
+
+  async function loadWorkspace() {
+    loadGeoCache();
+    const payload = await idbGet();
+    if (!payload || !Array.isArray(payload.datasets) || !payload.datasets.length) {
+      state.datasets = [];
+      state.records = [];
+      updateStats();
+      setStatus('No analyzer workspace found. Open CDR i2 Analyzer, map files, Save / auto-save, then Load here.');
+      return;
+    }
+    state.datasets = payload.datasets.map(d => {
+      let records = [];
+      if (Array.isArray(d.rows)) records = d.rows.map(unpackRecord);
+      else if (Array.isArray(d.records)) records = d.records.map(unpackRecord);
+      return Object.assign({}, d, { records });
+    });
+    state.records = [];
+    state.datasets.forEach(d => state.records.push(...d.records));
+
+    const targets = [...new Set(state.datasets.map(d => d.target).filter(Boolean))];
+    $('selTarget').innerHTML = '<option value="">All subjects</option>' +
+      targets.map(t => `<option value="${escAttr(t)}">${esc(t)}</option>`).join('');
+
+    refreshApartySelect();
+
+    let tmin = null, tmax = null;
+    state.records.forEach(r => {
+      if (!r.start) return;
+      const t = r.start.getTime();
+      if (tmin == null || t < tmin) tmin = t;
+      if (tmax == null || t > tmax) tmax = t;
+    });
+    if (tmin != null) {
+      $('dtFrom').value = toLocalInput(new Date(tmin));
+      $('dtTo').value = toLocalInput(new Date(tmax));
+    }
+
+    updateStats();
+    $('loadHint').textContent = `Loaded ${state.datasets.length} file(s) from IndexedDB · ${payload.updatedAt || ''}`;
+    setStatus(`Loaded ${state.records.length.toLocaleString()} CDR records. Click Build / refresh map.`);
+    buildMap();
+  }
+
+  function refreshApartySelect() {
+    const counts = {};
+    filteredRecords().forEach(r => {
+      const a = String(r.aparty || '').trim();
+      if (!a) return;
+      counts[a] = (counts[a] || 0) + 1;
+    });
+    const list = Object.keys(counts).sort((a,b)=>counts[b]-counts[a] || a.localeCompare(b));
+    const prev = $('selAparty').value;
+    $('selAparty').innerHTML = '<option value="">Select A-Party…</option>' +
+      list.map(a => `<option value="${escAttr(a)}">${esc(a)} (${counts[a]})</option>`).join('');
+    if (prev && counts[prev]) $('selAparty').value = prev;
+  }
+
+  function toLocalInput(d) {
+    const pad = n => String(n).padStart(2,'0');
+    return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  }
+  function parseLocalInput(v) {
+    const d = new Date(v);
+    return isNaN(d) ? null : d.getTime();
+  }
+
+  function filteredRecords() {
+    let from = parseLocalInput($('dtFrom').value);
+    let to = parseLocalInput($('dtTo').value);
+    if ($('dtTo').value && $('dtTo').value.length <= 16 && to != null) to += 59 * 1000;
+    const target = $('selTarget').value;
+    return state.records.filter(r => {
+      if (target && String(r.target || '') !== target) return false;
+      if (!r.start) return true;
+      const t = r.start.getTime();
+      if (from != null && t < from) return false;
+      if (to != null && t > to) return false;
+      return true;
+    });
+  }
+
+  function updateStats(scope) {
+    const rows = scope || state.records;
+    let coords = 0, addr = 0, none = 0;
+    rows.forEach(r => {
+      const c = resolveCoords(r);
+      if (c) coords++;
+      else if (String(r.address || '').trim().length >= 5) addr++;
+      else none++;
+    });
+    $('wsFiles').textContent = String(state.datasets.length);
+    $('wsRecs').textContent = rows.length.toLocaleString();
+    $('wsCoords').textContent = coords.toLocaleString();
+    $('wsAddr').textContent = addr.toLocaleString();
+    $('wsNone').textContent = none.toLocaleString();
+  }
+
+  function ensureMap() {
+    if (state.map) return;
+    state.map = L.map('map', { zoomControl: true }).setView([23.8103, 90.4125], 7);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      maxZoom: 19,
+      attribution: '&copy; OpenStreetMap'
+    }).addTo(state.map);
+    state.markers = L.layerGroup().addTo(state.map);
+    state.paths = L.layerGroup().addTo(state.map);
+  }
+
+  function buildMap() {
+    ensureMap();
+    refreshApartySelect();
+    const rows = filteredRecords();
+    updateStats(rows);
+    const intensityMode = $('selIntensity').value;
+    const showHeat = $('chkHeat').checked;
+    const buckets = {};
+    let mapped = 0, missingAddr = 0, missing = 0;
+
+    rows.forEach(r => {
+      const c = resolveCoords(r);
+      if (!c) {
+        if (String(r.address || '').trim().length >= 5) missingAddr++;
+        else missing++;
+        return;
+      }
+      mapped++;
+      const key = c.lat.toFixed(5) + ',' + c.lng.toFixed(5);
+      if (!buckets[key]) {
+        buckets[key] = {
+          lat: c.lat, lng: c.lng, count: 0, duration: 0,
+          address: r.address || '', source: c.source
+        };
+      }
+      buckets[key].count += 1;
+      buckets[key].duration += Number(r.duration || 0);
+      if (r.address && !buckets[key].address) buckets[key].address = r.address;
+    });
+
+    const points = Object.values(buckets);
+    if (state.heat) { state.map.removeLayer(state.heat); state.heat = null; }
+    state.markers.clearLayers();
+
+    if (showHeat && points.length) {
+      const heatData = points.map(p => {
+        const intensity = intensityMode === 'duration'
+          ? Math.max(0.2, Math.log1p(p.duration) / 4)
+          : Math.max(0.2, Math.log1p(p.count));
+        return [p.lat, p.lng, intensity];
+      });
+      state.heat = L.heatLayer(heatData, {
+        radius: 28, blur: 22, maxZoom: 17, minOpacity: 0.35,
+        gradient: { 0.2:'#2ecc71', 0.45:'#f1c40f', 0.7:'#e67e22', 1.0:'#c0392b' }
+      }).addTo(state.map);
+
+      points.slice().sort((a,b)=>b.count-a.count).slice(0, 80).forEach(p => {
+        const tip = `${p.address || (p.lat.toFixed(5)+', '+p.lng.toFixed(5))}<br>count: ${p.count}<br>duration: ${esc(fmtDur(p.duration))}<br>via: ${esc(p.source)}<br><b>Double-click for all CDR logs</b>`;
+        const marker = L.circleMarker([p.lat, p.lng], {
+          radius: 4 + Math.min(10, Math.log1p(p.count) * 2),
+          color: '#1a5276', weight: 1, fillColor: '#3498db', fillOpacity: 0.35
+        }).bindPopup(tip).addTo(state.markers);
+        marker.on('dblclick', e => {
+          L.DomEvent.stopPropagation(e);
+          if (e.originalEvent) L.DomEvent.preventDefault(e.originalEvent);
+          openLocationLogs({ lat: p.lat, lng: p.lng, address: p.address || '' });
+        });
+      });
+    }
+
+    const top = points.slice().sort((a,b)=>b.count-a.count).slice(0, 25);
+    $('topList').innerHTML = top.length
+      ? top.map((p,i) => `<div style="margin-bottom:6px"><b>${i+1}.</b> ${esc(p.address || (p.lat.toFixed(4)+', '+p.lng.toFixed(4)))}<br><span style="color:#5d6d7e">${p.count} events · ${esc(fmtDur(p.duration))} · ${esc(p.source)}</span></div>`).join('')
+      : 'No mappable locations in current filters.';
+
+    drawPaths(false);
+
+    if (points.length && !state.paths.getLayers().length) {
+      state.map.fitBounds(L.latLngBounds(points.map(p => [p.lat, p.lng])).pad(0.15));
+    }
+
+    setStatus(
+      `Mapped ${mapped.toLocaleString()} / ${rows.length.toLocaleString()} events · ` +
+      `${points.length} unique points · need geocode: ${missingAddr.toLocaleString()} · no location: ${missing.toLocaleString()}`
+    );
+    setTimeout(() => state.map.invalidateSize(), 200);
+  }
+
+  /** Collapse consecutive same coordinates; keep time order */
+  function buildTrackForAparty(aparty, rows) {
+    const events = [];
+    rows.forEach(r => {
+      if (String(r.aparty || '') !== String(aparty)) return;
+      const c = resolveCoords(r);
+      if (!c || !r.start) return;
+      events.push({
+        t: r.start.getTime(),
+        dt: fmtDt(r.start),
+        lat: c.lat,
+        lng: c.lng,
+        address: r.address || '',
+        bparty: r.bparty || '',
+        duration: Number(r.duration || 0),
+        source: c.source
+      });
+    });
+    events.sort((a,b)=>a.t-b.t);
+    const track = [];
+    events.forEach(ev => {
+      const last = track[track.length - 1];
+      const same = last && Math.abs(last.lat - ev.lat) < 1e-5 && Math.abs(last.lng - ev.lng) < 1e-5;
+      if (same) {
+        last.to_dt = ev.dt;
+        last.to_t = ev.t;
+        last.count = (last.count || 1) + 1;
+        last.duration += ev.duration;
+        if (!last.address && ev.address) last.address = ev.address;
+      } else {
+        track.push({
+          lat: ev.lat, lng: ev.lng, address: ev.address,
+          from_dt: ev.dt, to_dt: ev.dt, from_t: ev.t, to_t: ev.t,
+          count: 1, duration: ev.duration, bparty: ev.bparty, source: ev.source
+        });
+      }
+    });
+    return track;
+  }
+
+  function drawOnePath(aparty, track, color, fillTimeline) {
+    if (track.length < 1) return null;
+    const latlngs = track.map(p => [p.lat, p.lng]);
+    if (track.length >= 2) {
+      L.polyline(latlngs, {
+        color, weight: 4, opacity: 0.85, lineJoin: 'round'
+      }).bindPopup(`A-Party ${esc(aparty)}<br>${track.length} stops · ${esc(track[0].from_dt)} → ${esc(track[track.length-1].to_dt)}`)
+        .addTo(state.paths);
+
+      // from→to segment tooltips
+      for (let i = 0; i < track.length - 1; i++) {
+        const a = track[i], b = track[i+1];
+        L.polyline([[a.lat,a.lng],[b.lat,b.lng]], {
+          color, weight: 0, opacity: 0
+        }).bindTooltip(
+          `${esc(a.address || (a.lat.toFixed(4)+','+a.lng.toFixed(4)))} → ${esc(b.address || (b.lat.toFixed(4)+','+b.lng.toFixed(4)))}<br>${esc(a.to_dt)} → ${esc(b.from_dt)}`,
+          { sticky: true }
+        ).addTo(state.paths);
+      }
+    }
+
+    track.forEach((p, i) => {
+      const isStart = i === 0;
+      const isEnd = i === track.length - 1;
+      const fill = isStart ? '#27ae60' : (isEnd ? '#c0392b' : color);
+      const radius = isStart || isEnd ? 8 : 5;
+      const marker = L.circleMarker([p.lat, p.lng], {
+        radius, color: '#1b2631', weight: 1.5, fillColor: fill, fillOpacity: 0.92
+      }).bindPopup(
+        `<b>#${i+1} ${isStart?'START':(isEnd?'END':'STOP')}</b><br>` +
+        `A-Party: ${esc(aparty)}<br>` +
+        `${esc(p.address || (p.lat.toFixed(5)+', '+p.lng.toFixed(5)))}<br>` +
+        `${esc(p.from_dt)}${p.to_dt!==p.from_dt?' → '+esc(p.to_dt):''}<br>` +
+        `Events here: ${p.count} · ${esc(fmtDur(p.duration))}<br><b>Double-click for all CDR logs</b>`
+      ).addTo(state.paths);
+      marker.on('dblclick', e => {
+        L.DomEvent.stopPropagation(e);
+        if (e.originalEvent) L.DomEvent.preventDefault(e.originalEvent);
+        openLocationLogs({ lat: p.lat, lng: p.lng, address: p.address || '', aparty });
+      });
+
+      L.marker([p.lat, p.lng], {
+        icon: L.divIcon({
+          className: '',
+          html: `<div style="background:${fill};color:#fff;border:1px solid #1b2631;border-radius:10px;font:bold 10px Segoe UI;padding:1px 5px">${i+1}</div>`,
+          iconSize: [20, 16], iconAnchor: [-6, 8]
+        })
+      }).addTo(state.paths);
+    });
+
+    if (fillTimeline) {
+      let html = `<div style="font-size:11px;margin-bottom:6px"><b>${esc(aparty)}</b> · ${track.length} stops</div>`;
+      for (let i = 0; i < track.length; i++) {
+        const p = track[i];
+        const next = track[i+1];
+        html += `<div class="path-step" style="border-color:${color}">
+          <b>${i+1}.</b> ${esc(p.address || (p.lat.toFixed(4)+', '+p.lng.toFixed(4)))}<br>
+          <span class="t">${esc(p.from_dt)}${p.to_dt!==p.from_dt?' → '+esc(p.to_dt):''} · ${p.count} evt · ${esc(fmtDur(p.duration))}</span>`;
+        if (next) {
+          html += `<div class="t" style="margin-top:2px">↓ to #${i+2} · ${esc(next.from_dt)}</div>`;
+        }
+        html += `</div>`;
+      }
+      $('pathTimeline').innerHTML = html;
+    }
+    return latlngs;
+  }
+
+  function drawPaths(fit) {
+    ensureMap();
+    state.paths.clearLayers();
+    const rows = filteredRecords();
+    const selected = $('selAparty').value;
+    const drawSelected = $('chkPathSelected').checked && selected;
+    const drawAll = $('chkPathAll').checked;
+    const boundsPts = [];
+
+    if (!drawSelected && !drawAll) {
+      $('pathTimeline').innerHTML = '<div class="hint">Select an A-Party or enable “Show all A-Party paths”.</div>';
+      return;
+    }
+
+    if (drawAll) {
+      const counts = {};
+      rows.forEach(r => {
+        const a = String(r.aparty || '').trim();
+        if (a) counts[a] = (counts[a] || 0) + 1;
+      });
+      const list = Object.keys(counts).sort((a,b)=>counts[b]-counts[a]).slice(0, 25);
+      let drawn = 0;
+      list.forEach(a => {
+        const track = buildTrackForAparty(a, rows);
+        if (track.length < 1) return;
+        const ll = drawOnePath(a, track, colorForAparty(a), false);
+        if (ll) { ll.forEach(p => boundsPts.push(p)); drawn++; }
+      });
+      $('pathTimeline').innerHTML = `<div class="hint">Showing paths for ${drawn} A-Party number(s) (top by event count, max 25). Pick one A-Party for a detailed timeline.</div>`;
+      if (selected && drawSelected) {
+        const track = buildTrackForAparty(selected, rows);
+        drawOnePath(selected, track, colorForAparty(selected), true);
+        track.forEach(p => boundsPts.push([p.lat, p.lng]));
+      }
+    } else if (drawSelected) {
+      const track = buildTrackForAparty(selected, rows);
+      if (!track.length) {
+        $('pathTimeline').innerHTML = '<div class="hint">No mappable locations for this A-Party in the time frame. Geocode addresses or map lat/lng.</div>';
+      } else if (track.length === 1) {
+        drawOnePath(selected, track, colorForAparty(selected), true);
+        boundsPts.push([track[0].lat, track[0].lng]);
+        setStatus(`A-Party ${selected}: only 1 location in time frame (no from→to line).`);
+      } else {
+        drawOnePath(selected, track, colorForAparty(selected), true);
+        track.forEach(p => boundsPts.push([p.lat, p.lng]));
+        setStatus(`A-Party ${selected}: ${track.length} stops · ${track[0].from_dt} → ${track[track.length-1].to_dt}`);
+      }
+    }
+
+    if (fit !== false && boundsPts.length) {
+      state.map.fitBounds(L.latLngBounds(boundsPts).pad(0.2));
+    }
+  }
+
+  function clearPaths() {
+    if (state.paths) state.paths.clearLayers();
+    $('pathTimeline').innerHTML = '';
+    setStatus('Paths cleared.');
+  }
+
+  async function geocodeAddresses() {
+    if (state.geocoding) return;
+    const rows = filteredRecords();
+    const pending = {};
+    rows.forEach(r => {
+      if (resolveCoords(r)) return;
+      const addr = String(r.address || '').trim();
+      if (addr.length < 5) return;
+      const key = addrKey(addr);
+      if (!state.geoCache[key] || (state.geoCache[key].fail && !state.geoCache[key].lat)) {
+        // retry only never-attempted keys; skip hard fails already cached as fail
+        if (!state.geoCache[key]) pending[key] = addr;
+      }
+    });
+    // also include first-time fails cleared? only never cached
+    const keys = Object.keys(pending);
+    if (!keys.length) {
+      hideGeoProgress();
+      setStatus('Nothing to geocode — all usable rows already have coordinates or cache hits.');
+      buildMap();
+      return;
+    }
+    state.geocoding = true;
+    $('btnGeocode').disabled = true;
+    setGeoProgress(0, keys.length, `0 / ${keys.length}`);
+    let ok = 0, fail = 0;
+    for (let i = 0; i < keys.length; i++) {
+      const key = keys[i];
+      const q = pending[key];
+      setGeoProgress(i, keys.length, `${i} / ${keys.length} · ${q.slice(0,42)}`);
+      $('geoHint').textContent = `Geocoding ${i+1}/${keys.length}: ${q.slice(0,70)}…`;
+      setStatus(`Geocoding ${i+1}/${keys.length} unique addresses…`);
+      try {
+        const url = 'https://nominatim.openstreetmap.org/search?format=json&limit=1&countrycodes=bd&q=' + encodeURIComponent(q);
+        const res = await fetch(url, { headers: { 'Accept': 'application/json' } });
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        const data = await res.json();
+        if (data && data[0]) {
+          state.geoCache[key] = { lat: parseFloat(data[0].lat), lng: parseFloat(data[0].lon), display: data[0].display_name || q };
+          ok++;
+        } else {
+          state.geoCache[key] = { lat: null, lng: null, fail: true };
+          fail++;
+        }
+      } catch (err) {
+        state.geoCache[key] = { lat: null, lng: null, fail: true, err: String(err) };
+        fail++;
+      }
+      saveGeoCache();
+      setGeoProgress(i + 1, keys.length, `${i+1} / ${keys.length}`);
+      await sleep(1100);
+      if ((i + 1) % 5 === 0) buildMap();
+    }
+    state.geocoding = false;
+    $('btnGeocode').disabled = false;
+    setGeoProgress(keys.length, keys.length, `${keys.length} / ${keys.length} done`);
+    $('geoHint').textContent = `Geocode done: ${ok} ok · ${fail} failed · cached locally.`;
+    setStatus(`Geocode complete: ${ok} ok · ${fail} failed.`);
+    buildMap();
+    setTimeout(hideGeoProgress, 2500);
+  }
+
+  function locKey(lat, lng) {
+    return Number(lat).toFixed(5) + ',' + Number(lng).toFixed(5);
+  }
+
+  function logsAtLocation(lat, lng, apartyFilter) {
+    const key = locKey(lat, lng);
+    return filteredRecords().filter(r => {
+      if (apartyFilter && String(r.aparty || '') !== String(apartyFilter)) return false;
+      const c = resolveCoords(r);
+      if (!c) return false;
+      return locKey(c.lat, c.lng) === key;
+    }).sort((a, b) => {
+      const ta = a.start ? a.start.getTime() : 0;
+      const tb = b.start ? b.start.getTime() : 0;
+      return tb - ta;
+    });
+  }
+
+  function openLocationLogs(opts) {
+    const lat = opts.lat, lng = opts.lng;
+    const aparty = opts.aparty || '';
+    const logs = logsAtLocation(lat, lng, aparty || null);
+    state.modalLogs = logs;
+    const dur = logs.reduce((s, r) => s + Number(r.duration || 0), 0);
+    const titleLoc = opts.address || (lat.toFixed(5) + ', ' + lng.toFixed(5));
+    $('modalTitle').textContent = 'Location CDR logs';
+    $('modalMeta').innerHTML =
+      `${esc(titleLoc)}<br>` +
+      `${logs.length} logs · ${esc(fmtDur(dur))}` +
+      (aparty ? ` · A-Party filter: ${esc(aparty)}` : '') +
+      `<br>Coords: ${lat.toFixed(5)}, ${lng.toFixed(5)} · Double-clicked map circle`;
+    $('modalFilter').value = '';
+    renderModalRows('');
+    $('logModal').classList.add('open');
+  }
+
+  function renderModalRows(q) {
+    q = (q || '').toLowerCase();
+    const rows = state.modalLogs.filter(r => {
+      if (!q) return true;
+      return [
+        fmtDt(r.start), r.usage, r.usage_class, r.aparty, r.bparty,
+        r.network, r.provider, r.imei, r.address, r.source, r.lac, r.ci
+      ].join(' ').toLowerCase().includes(q);
+    });
+    $('modalRows').innerHTML = rows.length ? rows.map((r, i) => `<tr>
+      <td>${i+1}</td>
+      <td>${esc(fmtDt(r.start))}</td>
+      <td>${esc(fmtDur(r.duration))}</td>
+      <td>${esc(r.usage || r.usage_class || '-')}</td>
+      <td>${esc(r.aparty || '-')}</td>
+      <td>${esc(r.bparty || '-')}</td>
+      <td>${esc(r.network || '-')}</td>
+      <td>${esc(r.provider || '-')}</td>
+      <td>${esc(r.imei || '-')}</td>
+      <td>${esc((r.lac || '-') + ' / ' + (r.ci || '-'))}</td>
+      <td>${esc(r.address || '-')}</td>
+      <td>${esc(r.source || '-')}</td>
+    </tr>`).join('') : '<tr><td colspan="12" style="padding:16px;color:#7f8c8d">No CDR logs at this location in current filters</td></tr>';
+  }
+
+  function closeModal() { $('logModal').classList.remove('open'); }
+
+  function csvCell(v) {
+    return '"' + String(v ?? '').replace(/"/g, '""') + '"';
+  }
+
+  function exportModalCsv() {
+    const header = ['datetime','duration_sec','usage','aparty','bparty','network','provider','imei','lac','ci','address','source'];
+    const lines = [header.join(',')];
+    state.modalLogs.forEach(r => {
+      lines.push([
+        fmtDt(r.start), Number(r.duration || 0), r.usage || r.usage_class || '',
+        r.aparty, r.bparty, r.network, r.provider, r.imei, r.lac, r.ci, r.address, r.source
+      ].map(csvCell).join(','));
+    });
+    const blob = new Blob(['\ufeff' + lines.join('\n')], { type: 'text/csv;charset=utf-8' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'cdr_location_logs.csv';
+    a.click();
+    URL.revokeObjectURL(a.href);
+  }
+
+  function sleep(ms){ return new Promise(r => setTimeout(r, ms)); }
+  function fmtDur(sec) {
+    sec = Number(sec || 0);
+    if (sec <= 0) return '0s';
+    const h = Math.floor(sec / 3600);
+    const m = Math.floor((sec % 3600) / 60);
+    const s = sec % 60;
+    if (h) return h + 'h' + String(m).padStart(2,'0') + 'm';
+    if (m) return m + 'm' + String(s).padStart(2,'0') + 's';
+    return s + 's';
+  }
+  function esc(s){ return String(s??'').replace(/[&<>"']/g,c=>({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c])); }
+  function escAttr(s){ return esc(s).replace(/\n/g,' '); }
+
+  function setPanel(open){
+    $('app').classList.toggle('panel-open', !!open);
+    if (state.map) setTimeout(() => state.map.invalidateSize(), 240);
+  }
+  $('btnPanel').onclick = () => setPanel(true);
+  $('btnClosePanel').onclick = () => setPanel(false);
+  $('panelScrim').onclick = () => setPanel(false);
+
+  $('btnLoad').onclick = () => loadWorkspace().catch(err => setStatus('Load failed: ' + err));
+  $('btnBuild').onclick = () => buildMap();
+  $('btnApply').onclick = () => buildMap();
+  $('btnGeocode').onclick = () => geocodeAddresses().catch(err => {
+    state.geocoding = false;
+    $('btnGeocode').disabled = false;
+    hideGeoProgress();
+    setStatus('Geocode failed: ' + err);
+  });
+  $('btnDrawPath').onclick = () => drawPaths(true);
+  $('btnClearPath').onclick = () => clearPaths();
+  $('selIntensity').onchange = () => buildMap();
+  $('selTarget').onchange = () => buildMap();
+  $('chkHeat').onchange = () => buildMap();
+  $('selAparty').onchange = () => { if ($('chkPathSelected').checked) drawPaths(true); };
+  $('chkPathSelected').onchange = () => drawPaths(true);
+  $('chkPathAll').onchange = () => drawPaths(true);
+  $('dtFrom').onchange = $('dtTo').onchange = () => refreshApartySelect();
+
+  $('btnCloseModal').onclick = closeModal;
+  $('logModal').onclick = e => { if (e.target.id === 'logModal') closeModal(); };
+  $('modalFilter').oninput = e => renderModalRows(e.target.value);
+  $('btnExportLocCsv').onclick = exportModalCsv;
+  document.addEventListener('keydown', e => {
+    if (e.key === 'Escape') closeModal();
+  });
+
+  // Prevent map zoom on marker double-click
+  ensureMap();
+  loadWorkspace().catch(() => setStatus('Could not open IndexedDB. Use the analyzer on this same browser/origin first.'));
+})();
+</script>
+</body>
+</html>
