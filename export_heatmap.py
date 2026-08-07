@@ -1,0 +1,2021 @@
+#!/usr/bin/env python3
+"""Build Leaflet heatmap page that reads CDR i2 Analyzer IndexedDB workspace."""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+OUT_DIR = Path(r"C:\Users\rahim\Downloads\cdr\output")
+DOCS_DIR = Path(r"C:\Users\rahim\Downloads\cdr\docs")
+
+HEATMAP_HTML = r"""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>CDR Heatmap Analyzer</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://unpkg.com/leaflet.heat@0.2.0/dist/leaflet-heat.js"></script>
+<style>
+:root {
+  --bg:#f7f4ef; --ink:#1b2631; --muted:#5d6d7e; --line:#d5d8dc; --accent:#1a5276; --blue:#2980b9;
+}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%;background:var(--bg);color:var(--ink);font-family:"Segoe UI",Tahoma,sans-serif;overflow:hidden}
+#app{display:grid;grid-template-columns:360px 1fr;height:100vh;height:100dvh}
+aside{border-right:1px solid var(--line);background:linear-gradient(180deg,#fff,#f4f1ea);padding:12px;overflow:auto;z-index:2;-webkit-overflow-scrolling:touch}
+h1{font-size:15px;margin:0 0 4px}
+.sub{font-size:11px;color:var(--muted);margin-bottom:10px;line-height:1.35}
+.navlinks a{font-size:12px;color:var(--accent);font-weight:600;text-decoration:none}
+.navlinks a:hover{text-decoration:underline}
+.box{background:#fff;border:1px solid var(--line);border-radius:8px;padding:10px;margin-bottom:10px}
+.box h2{font-size:12px;margin:0 0 8px;color:var(--accent)}
+.row{display:grid;gap:4px;margin-bottom:7px;font-size:11px}
+label{color:var(--muted)}
+.chk{display:flex;gap:8px;align-items:center;color:var(--ink);font-size:12px;margin:6px 0;cursor:pointer}
+input,select,button{font:inherit}
+input[type=datetime-local],select{
+  width:100%;border:1px solid var(--line);border-radius:6px;padding:6px 8px;font-size:12px;background:#fff
+}
+button{border:1px solid #aeb6bf;background:#fff;border-radius:8px;padding:7px 10px;font-size:12px;cursor:pointer}
+button:hover{background:#f2f4f6}
+button.primary{background:#1b2631;color:#fff;border-color:#1b2631}
+button:disabled{opacity:.55;cursor:not-allowed}
+.btns{display:flex;gap:6px;flex-wrap:wrap}
+.btns button{flex:1}
+.hint{font-size:10px;color:var(--muted);line-height:1.35;margin-top:6px}
+.stat{display:grid;grid-template-columns:1fr auto;gap:4px 8px;font-size:11px}
+.stat b{font-variant-numeric:tabular-nums}
+.progress-wrap{display:none;margin-top:8px}
+.progress-wrap.on{display:block}
+.progress{
+  height:10px;background:#e8ecef;border-radius:999px;overflow:hidden;border:1px solid var(--line)
+}
+.progress > i{
+  display:block;height:100%;width:0%;background:linear-gradient(90deg,#2980b9,#1a5276);
+  transition:width .2s ease
+}
+.progress-meta{display:flex;justify-content:space-between;gap:8px;font-size:10px;color:var(--muted);margin-top:4px}
+#map{width:100%;height:100%;background:#dfe6e9}
+#status{
+  position:absolute;left:12px;bottom:12px;z-index:500;max-width:min(560px,90vw);
+  background:#ffffffee;border:1px solid var(--line);border-radius:8px;padding:8px 10px;font-size:11px;color:var(--muted);
+  box-shadow:0 2px 10px rgba(0,0,0,.08)
+}
+#btnPanel,#panelScrim{display:none}
+#btnPanel{
+  position:absolute;top:12px;left:12px;z-index:600;
+  border:1px solid #aeb6bf;background:#fff;border-radius:8px;padding:8px 12px;font-size:13px;font-weight:600;cursor:pointer;
+  box-shadow:0 2px 8px rgba(0,0,0,.08)
+}
+.aside-head{display:none}
+main{position:relative;min-width:0;min-height:0}
+.path-step{border-left:3px solid #2980b9;padding:4px 0 4px 8px;margin:0 0 6px;font-size:11px}
+.path-step .t{color:var(--muted)}
+.path-arrow-wrap{background:transparent!important;border:0!important}
+.path-edge-label-wrap{background:transparent!important;border:0!important}
+#pathLegend{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+.legend-chip{
+  display:inline-flex;align-items:center;gap:6px;font-size:10px;
+  border:1px solid var(--line);border-radius:999px;padding:3px 8px;background:#fff
+}
+.legend-chip i{display:inline-block;width:10px;height:10px;border-radius:50%;border:1px solid #1b2631}
+.popup-cdr{font-size:12px;line-height:1.4;min-width:200px;max-width:300px}
+.popup-cdr h4{margin:0 0 6px;font-size:13px}
+.popup-cdr .muted{color:#5d6d7e;font-size:11px}
+.popup-cdr ul{margin:4px 0 0;padding-left:16px}
+.popup-cdr li{margin:2px 0}
+#logModal{display:none;position:fixed;inset:0;z-index:900;background:rgba(20,28,36,.45);align-items:center;justify-content:center;padding:16px}
+#logModal.open{display:flex}
+.modal-card{width:min(1100px,96vw);max-height:88vh;background:#fff;border-radius:12px;border:1px solid #d5d8dc;box-shadow:0 18px 50px rgba(0,0,0,.28);display:flex;flex-direction:column;overflow:hidden}
+.modal-head{display:flex;gap:12px;justify-content:space-between;padding:14px 16px;border-bottom:1px solid #e5e8eb;background:linear-gradient(180deg,#fff,#f7f4ef)}
+.modal-head h3{margin:0 0 4px;font-size:15px}
+.modal-head .meta{font-size:11px;color:var(--muted);line-height:1.4}
+.modal-tools{display:flex;gap:8px;padding:10px 16px;border-bottom:1px solid #eee;background:#fafafa}
+.modal-tools input{flex:1;border:1px solid var(--line);border-radius:6px;padding:6px 8px;font-size:12px}
+.modal-body{overflow:auto;-webkit-overflow-scrolling:touch}
+.modal-body table{width:100%;border-collapse:collapse;font-size:11px}
+.modal-body th{position:sticky;top:0;background:#1b2631;color:#fff;text-align:left;padding:8px;white-space:nowrap}
+.modal-body td{padding:6px 8px;border-bottom:1px solid #eef1f4;vertical-align:top;max-width:200px;word-break:break-word}
+.modal-body tr:nth-child(even) td{background:#fafbfc}
+@media (max-width:900px){
+  #app{grid-template-columns:1fr}
+  aside{
+    position:fixed;inset:0 auto 0 0;width:min(360px,92vw);transform:translateX(-105%);
+    transition:transform .22s ease;z-index:700;padding-top:0
+  }
+  #app.panel-open aside{transform:translateX(0);box-shadow:10px 0 32px rgba(0,0,0,.22)}
+  .aside-head{
+    display:flex;align-items:center;justify-content:space-between;gap:10px;
+    position:sticky;top:0;z-index:2;margin:0 -12px 10px;padding:12px;
+    background:linear-gradient(180deg,#fff,#f4f1ea);border-bottom:1px solid var(--line)
+  }
+  .aside-head h1{margin:0;font-size:15px}
+  .aside-title-desktop{display:none}
+  #btnClosePanel{
+    display:inline-flex;align-items:center;justify-content:center;width:36px;height:36px;
+    border-radius:10px;border:1px solid #aeb6bf;background:#fff;font-size:20px;font-weight:700;cursor:pointer
+  }
+  #btnPanel{display:inline-flex}
+  #app.panel-open #btnPanel{visibility:hidden}
+  #panelScrim{display:none;position:fixed;inset:0;background:rgba(20,28,36,.42);z-index:650;border:0}
+  #app.panel-open #panelScrim{display:block}
+  #status{left:12px;right:12px;max-width:none}
+}
+</style>
+</head>
+<body>
+<button id="panelScrim" type="button" aria-label="Close panel"></button>
+<div id="app">
+  <aside id="sidePanel">
+    <div class="aside-head">
+      <h1>CDR Heatmap</h1>
+      <button id="btnClosePanel" type="button" aria-label="Hide sidebar">×</button>
+    </div>
+    <h1 class="aside-title-desktop">CDR Heatmap Analyzer</h1>
+    <div class="sub">Uses mapped CDR data from the i2 Analyzer (IndexedDB). Prefers latitude/longitude; otherwise geocodes address via OpenStreetMap.</div>
+    <div class="navlinks" style="margin-bottom:10px">
+      <a href="index.html">← Back to CDR i2 Analyzer</a>
+    </div>
+
+    <div class="box">
+      <h2>Workspace</h2>
+      <div class="stat">
+        <span>Mapped files</span><b id="wsFiles">0</b>
+        <span>Records</span><b id="wsRecs">0</b>
+        <span>With coords</span><b id="wsCoords">0</b>
+        <span>Need address geocode</span><b id="wsAddr">0</b>
+        <span>No location</span><b id="wsNone">0</b>
+      </div>
+      <div class="btns" style="margin-top:8px">
+        <button id="btnLoad" class="primary" type="button">Load storage</button>
+        <button id="btnBuild" type="button">Build / refresh map</button>
+      </div>
+      <div class="hint" id="loadHint">Load the same IndexedDB workspace saved by the analyzer.</div>
+    </div>
+
+    <div class="box">
+      <h2>Address field mapping</h2>
+      <div class="row"><label>Use this storage field as Address</label>
+        <select id="selAddrCol">
+          <option value="address">Address (saved in storage)</option>
+          <option value="lac_ci">LAC / CI</option>
+          <option value="lac">LAC only</option>
+          <option value="ci">CI / Cell only</option>
+          <option value="network">Network</option>
+          <option value="provider">Provider</option>
+        </select>
+      </div>
+      <div class="btns">
+        <button id="btnApplyAddr" class="primary" type="button">Apply to loaded storage</button>
+      </div>
+      <div class="hint" id="addrMapHint">Works on IndexedDB-loaded records (no file picker). Choose which saved field is used for map / path / geocode.</div>
+    </div>
+
+    <div class="box">
+      <h2>Unwired Labs Location API</h2>
+      <div class="hint" style="margin-bottom:8px">
+        <a href="https://unwiredlabs.com/api#documentation" target="_blank" rel="noopener">API documentation</a>
+        · <a href="https://docs.unwiredlabs.com/" target="_blank" rel="noopener">Full docs</a>
+        · <a href="https://my.unwiredlabs.com/" target="_blank" rel="noopener">Get / manage token</a>
+      </div>
+      <div class="row"><label>Access token</label>
+        <input id="uwToken" type="password" placeholder="Paste access token from Unwired Labs" autocomplete="off"/>
+      </div>
+      <div class="row"><label>Default MCC</label><input id="uwMcc" type="number" min="0" max="999" value="470"/></div>
+      <div class="row"><label>Default MNC (Bangladesh)</label>
+        <select id="uwMnc">
+          <option value="1">01 — Grameenphone</option>
+          <option value="2">02 — Robi</option>
+          <option value="3" selected>03 — Banglalink</option>
+          <option value="4">04 — Teletalk</option>
+          <option value="7">07 — Airtel</option>
+        </select>
+      </div>
+      <div class="row"><label>Radio</label>
+        <select id="uwRadio">
+          <option value="gsm">GSM</option>
+          <option value="umts">UMTS / 3G</option>
+          <option value="lte" selected>LTE / 4G</option>
+        </select>
+      </div>
+      <label class="chk"><input type="checkbox" id="uwUseForAddress" checked> Prefer Unwired for address geocoding (else Nominatim)</label>
+      <div class="btns">
+        <button id="btnSaveUw" class="primary" type="button">Save token</button>
+        <button id="btnClearUw" type="button">Clear token</button>
+        <button id="btnOpenUwDocs" type="button">Open docs</button>
+      </div>
+      <div class="btns">
+        <button id="btnCellGeo" type="button">Locate by LAC/CI (all MNC × radio)</button>
+      </div>
+      <div class="progress-wrap" id="cellProgressWrap">
+        <div class="progress"><i id="cellProgressBar"></i></div>
+        <div class="progress-meta">
+          <span id="cellProgressText">0 / 0</span>
+          <span id="cellProgressPct">0%</span>
+        </div>
+      </div>
+      <div class="hint" id="uwHint">Token is stored only in this browser (localStorage). Open docs to create a token, then paste &amp; Save.</div>
+    </div>
+
+    <div class="box">
+      <h2>Empty address CDR list</h2>
+      <div class="stat">
+        <span>Empty Address (no coords)</span><b id="noLocCount">0</b>
+        <span>Have Address (need geocode, hidden)</span><b id="noLocAddrText">0</b>
+        <span>Listed here</span><b id="noLocEmpty">0</b>
+      </div>
+      <div class="btns">
+        <button id="btnShowNoLoc" type="button">Show empty-address list</button>
+        <button id="btnExportNoLoc" type="button">Export CSV</button>
+      </div>
+      <div id="noLocPreview" style="margin-top:8px;max-height:160px;overflow:auto;font-size:10px;line-height:1.4;color:var(--ink)">Only rows with empty Address are listed.</div>
+    </div>
+
+    <div class="box">
+      <h2>Filters</h2>
+      <div class="row"><label>From</label><input id="dtFrom" type="datetime-local"/></div>
+      <div class="row"><label>To</label><input id="dtTo" type="datetime-local"/></div>
+      <div class="row"><label>Subject / target</label><select id="selTarget"><option value="">All subjects</option></select></div>
+      <div class="row"><label>Intensity</label>
+        <select id="selIntensity">
+          <option value="count">Event count</option>
+          <option value="duration">Call duration</option>
+        </select>
+      </div>
+      <label class="chk"><input type="checkbox" id="chkHeat" checked> Show heatmap</label>
+      <div class="btns">
+        <button id="btnApply" class="primary" type="button">Apply</button>
+        <button id="btnGeocode" type="button">Geocode addresses</button>
+      </div>
+      <div class="progress-wrap" id="geoProgressWrap">
+        <div class="progress"><i id="geoProgressBar"></i></div>
+        <div class="progress-meta">
+          <span id="geoProgressText">0 / 0</span>
+          <span id="geoProgressPct">0%</span>
+        </div>
+      </div>
+      <div class="hint" id="geoHint">Geocode tries Address first (Unwired/Nominatim, cached). If not found and an Unwired token is saved, falls back to LAC/CI cell locate; otherwise leaves the row unmapped.</div>
+    </div>
+
+    <div class="box">
+      <h2>A-Party location path (time frame)</h2>
+      <div class="row"><label>A-Party</label><select id="selAparty"><option value="">Select A-Party…</option></select></div>
+      <label class="chk"><input type="checkbox" id="chkPathSelected"> Draw selected A-Party path</label>
+      <label class="chk"><input type="checkbox" id="chkPathAll"> Show all A-Party paths (color-coded)</label>
+      <label class="chk"><input type="checkbox" id="chkPathArrows" checked> Show direction arrows (datetime order)</label>
+      <div class="btns">
+        <button id="btnDrawPath" class="primary" type="button">Draw / refresh paths</button>
+        <button id="btnClearPath" type="button">Clear paths</button>
+      </div>
+      <div class="hint">Each A-Party gets its own color. Lines follow CDR datetime where→where with arrows. Click stop/segment for A-Party, address, B-Party, count &amp; minutes.</div>
+      <div id="pathLegend"></div>
+      <div id="pathTimeline" style="margin-top:8px;max-height:240px;overflow:auto"></div>
+    </div>
+
+    <div class="box">
+      <h2>Top locations</h2>
+      <div id="topList" style="font-size:11px;max-height:180px;overflow:auto;line-height:1.45;color:var(--ink)">Load data first.</div>
+    </div>
+  </aside>
+
+  <main>
+    <button id="btnPanel" type="button">☰ Panel</button>
+    <div id="map"></div>
+    <div id="status">Heatmap ready — load analyzer workspace to begin.</div>
+  </main>
+</div>
+
+<div id="logModal">
+  <div class="modal-card">
+    <div class="modal-head">
+      <div>
+        <h3 id="modalTitle">Location CDR logs</h3>
+        <div class="meta" id="modalMeta"></div>
+      </div>
+      <button id="btnCloseModal" type="button">Close</button>
+    </div>
+    <div class="modal-tools">
+      <input id="modalFilter" type="search" placeholder="Filter logs…"/>
+      <button id="btnExportLocCsv" type="button">Export CSV</button>
+    </div>
+    <div class="modal-body">
+      <table>
+        <thead>
+          <tr>
+            <th>#</th><th>Date Time</th><th>Duration</th><th>Usage</th>
+            <th>A-Party</th><th>B-Party</th><th>Network</th><th>Provider</th>
+            <th>IMEI</th><th>LAC/CI</th><th>Address</th><th>Source</th>
+          </tr>
+        </thead>
+        <tbody id="modalRows"></tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<script>
+(function () {
+  'use strict';
+
+  const IDB_NAME = 'cdr_i2_analyzer_db';
+  const IDB_STORE = 'workspace';
+  const IDB_KEY = 'datasets_v2';
+  const GEO_CACHE_KEY = 'cdr_heatmap_geocode_v1';
+  const CELL_CACHE_KEY = 'cdr_heatmap_cell_cache_v1';
+  const UW_TOKEN_KEY = 'cdr_unwired_token_v1';
+  const UW_SETTINGS_KEY = 'cdr_unwired_settings_v1';
+  const UW_DOCS_URL = 'https://unwiredlabs.com/api#documentation';
+  const UW_PROCESS_URL = 'https://us1.unwiredlabs.com/v2/process';
+  const UW_SEARCH_URL = 'https://us1.unwiredlabs.com/v2/search';
+  const REC_COLS = ['start','aparty','bparty','duration','usage','usage_class','provider','network','imei','imsi','lac','ci','address','source','sheet','target','lat','lng'];
+  const PATH_COLORS = ['#c0392b','#2980b9','#27ae60','#8e44ad','#d35400','#16a085','#2c3e50','#e67e22','#1abc9c','#9b59b6'];
+  const ADDR_MAP_LS = 'cdr_heatmap_addr_field_v1';
+
+  const state = {
+    datasets: [],
+    records: [],
+    map: null,
+    heat: null,
+    markers: null,
+    paths: null,
+    geoCache: {},
+    cellCache: {},
+    geocoding: false,
+    cellGeocoding: false,
+    modalLogs: [],
+    noLocLogs: [],
+    addrField: 'address',
+    uw: { token: '', mcc: 470, mnc: 3, radio: 'lte', useForAddress: true },
+  };
+
+  function $(id){ return document.getElementById(id); }
+  function setStatus(msg){ $('status').textContent = msg; }
+
+  function openDb() {
+    return new Promise((resolve, reject) => {
+      const req = indexedDB.open(IDB_NAME, 1);
+      req.onupgradeneeded = () => {
+        const db = req.result;
+        if (!db.objectStoreNames.contains(IDB_STORE)) db.createObjectStore(IDB_STORE);
+      };
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error);
+    });
+  }
+  async function idbGet() {
+    const db = await openDb();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(IDB_STORE, 'readonly');
+      const req = tx.objectStore(IDB_STORE).get(IDB_KEY);
+      req.onsuccess = () => resolve(req.result || null);
+      req.onerror = () => reject(req.error);
+    });
+  }
+
+  async function idbPut(value) {
+    const db = await openDb();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(IDB_STORE, 'readwrite');
+      tx.objectStore(IDB_STORE).put(value, IDB_KEY);
+      tx.oncomplete = () => { db.close(); resolve(); };
+      tx.onerror = () => { db.close(); reject(tx.error || new Error('IndexedDB write failed')); };
+    });
+  }
+
+  function loadAddrField() {
+    try {
+      let v = localStorage.getItem(ADDR_MAP_LS) || 'address';
+      if (v.startsWith('{') || v.startsWith('[')) v = 'address';
+      const ok = { address:1, lac_ci:1, lac:1, ci:1, network:1, provider:1 };
+      state.addrField = ok[v] ? v : 'address';
+    } catch (_) {
+      state.addrField = 'address';
+    }
+    if ($('selAddrCol')) $('selAddrCol').value = state.addrField;
+  }
+  function saveAddrField() {
+    try { localStorage.setItem(ADDR_MAP_LS, state.addrField || 'address'); } catch (_) {}
+  }
+
+  function getSavedAddress(rec) {
+    return String(rec && rec.address != null ? rec.address : '').trim();
+  }
+
+  function getAddrText(rec) {
+    const field = state.addrField || 'address';
+    if (field === 'address') return getSavedAddress(rec);
+    if (field === 'lac_ci') {
+      const lac = String(rec.lac || '').trim();
+      const ci = String(rec.ci || '').trim();
+      if (lac && ci) return lac + '/' + ci;
+      return lac || ci || '';
+    }
+    if (field === 'lac') return String(rec.lac || '').trim();
+    if (field === 'ci') return String(rec.ci || '').trim();
+    if (field === 'network') return String(rec.network || '').trim();
+    if (field === 'provider') return String(rec.provider || '').trim();
+    return getSavedAddress(rec);
+  }
+
+  /** Prefer saved Address column for geocode / map when it has real text */
+  function getGeoQuery(rec) {
+    const saved = getSavedAddress(rec);
+    if (saved.length >= 4) return saved;
+    const mapped = getAddrText(rec);
+    if (mapped.length >= 4) return mapped;
+    return saved || mapped || '';
+  }
+
+  function hasAddressText(rec) {
+    return getGeoQuery(rec).length >= 4 || getSavedAddress(rec).length >= 4;
+  }
+
+  function fieldLabel(field) {
+    return ({
+      address: 'Address (saved)',
+      lac_ci: 'LAC / CI',
+      lac: 'LAC only',
+      ci: 'CI / Cell only',
+      network: 'Network',
+      provider: 'Provider'
+    })[field] || field;
+  }
+
+  const HEAT_REC_COLS = ['start','aparty','bparty','duration','usage','usage_class','provider','network','imei','imsi','lac','ci','address','source','sheet','target','lat','lng'];
+
+  function packRecordForSave(r) {
+    const start = r.start instanceof Date
+      ? Math.floor(r.start.getTime() / 1000)
+      : (typeof r.start === 'number' ? r.start : (r.start ? Math.floor(new Date(r.start).getTime()/1000) : null));
+    return HEAT_REC_COLS.map(k => {
+      if (k === 'start') return start;
+      if (k === 'duration') return Number(r.duration || 0);
+      if (k === 'lat' || k === 'lng') return (r[k] != null && r[k] !== '' && !isNaN(Number(r[k]))) ? Number(r[k]) : '';
+      return r[k] == null ? '' : r[k];
+    });
+  }
+
+  async function saveWorkspaceFromHeatmap() {
+    const payload = {
+      version: 2,
+      engine: 'indexeddb',
+      updatedAt: new Date().toISOString(),
+      updatedBy: 'heatmap',
+      datasets: state.datasets.map(d => ({
+        id: d.id,
+        name: d.name,
+        sheet: d.sheet,
+        mapping: d.mapping || {},
+        target: d.target || '',
+        savedAt: d.savedAt || new Date().toISOString(),
+        cols: HEAT_REC_COLS,
+        rows: (d.records || []).map(packRecordForSave),
+        headers: Array.isArray(d.headers) ? d.headers : [],
+        rawMatrix: Array.isArray(d.rawMatrix) ? d.rawMatrix : null,
+      })),
+    };
+    // preserve annotations if present
+    try {
+      const prev = await idbGet();
+      if (prev && prev.annotations) payload.annotations = prev.annotations;
+    } catch (_) {}
+    await idbPut(payload);
+  }
+
+  function unpackRecord(row) {
+    if (!Array.isArray(row)) {
+      return Object.assign({}, row, {
+        start: row.start ? new Date(row.start) : null,
+        lat: row.lat != null && row.lat !== '' ? Number(row.lat) : null,
+        lng: row.lng != null && row.lng !== '' ? Number(row.lng) : null,
+      });
+    }
+    const o = {};
+    REC_COLS.forEach((k, i) => { o[k] = row[i]; });
+    o.start = (typeof o.start === 'number' && o.start > 0) ? new Date(o.start * 1000) : null;
+    o.duration = Number(o.duration || 0);
+    o.lat = (o.lat !== '' && o.lat != null && !isNaN(Number(o.lat))) ? Number(o.lat) : null;
+    o.lng = (o.lng !== '' && o.lng != null && !isNaN(Number(o.lng))) ? Number(o.lng) : null;
+    return o;
+  }
+
+  function parseLatLngFromText(text) {
+    const s = String(text || '').trim();
+    if (!s) return null;
+    let m = s.match(/(-?\d{1,2}\.\d+)\s*[,;\s]\s*(-?\d{1,3}\.\d+)/);
+    if (m) {
+      const a = parseFloat(m[1]), b = parseFloat(m[2]);
+      if (Math.abs(a) <= 90 && Math.abs(b) <= 180) return { lat: a, lng: b };
+      if (Math.abs(b) <= 90 && Math.abs(a) <= 180) return { lat: b, lng: a };
+    }
+    m = s.match(/lat(?:itude)?\s*[:=]\s*(-?\d+\.?\d*)/i);
+    const m2 = s.match(/l(?:ng|on|ongitude)\s*[:=]\s*(-?\d+\.?\d*)/i);
+    if (m && m2) {
+      const lat = parseFloat(m[1]), lng = parseFloat(m2[1]);
+      if (isFinite(lat) && isFinite(lng)) return { lat, lng };
+    }
+    return null;
+  }
+
+  function loadGeoCache() {
+    try { state.geoCache = JSON.parse(localStorage.getItem(GEO_CACHE_KEY) || '{}') || {}; }
+    catch (_) { state.geoCache = {}; }
+  }
+  function saveGeoCache() {
+    try { localStorage.setItem(GEO_CACHE_KEY, JSON.stringify(state.geoCache)); } catch (_) {}
+  }
+
+  function loadCellCache() {
+    try { state.cellCache = JSON.parse(localStorage.getItem(CELL_CACHE_KEY) || '{}') || {}; }
+    catch (_) { state.cellCache = {}; }
+  }
+  function saveCellCache() {
+    try { localStorage.setItem(CELL_CACHE_KEY, JSON.stringify(state.cellCache)); } catch (_) {}
+  }
+
+  function openUwDocs() {
+    window.open(UW_DOCS_URL, '_blank', 'noopener');
+  }
+
+  function loadUwSettings() {
+    try {
+      state.uw.token = localStorage.getItem(UW_TOKEN_KEY) || '';
+      const s = JSON.parse(localStorage.getItem(UW_SETTINGS_KEY) || '{}') || {};
+      if (s.mcc != null) state.uw.mcc = Number(s.mcc) || 470;
+      if (s.mnc != null) state.uw.mnc = Number(s.mnc) || 3;
+      if (s.radio) state.uw.radio = String(s.radio);
+      if (s.useForAddress != null) state.uw.useForAddress = !!s.useForAddress;
+    } catch (_) {}
+    if ($('uwToken')) $('uwToken').value = state.uw.token || '';
+    if ($('uwMcc')) $('uwMcc').value = String(state.uw.mcc || 470);
+    if ($('uwMnc')) $('uwMnc').value = String(state.uw.mnc || 3);
+    if ($('uwRadio')) $('uwRadio').value = state.uw.radio || 'lte';
+    if ($('uwUseForAddress')) $('uwUseForAddress').checked = state.uw.useForAddress !== false;
+    updateUwHint();
+  }
+
+  function saveUwSettingsFromUi() {
+    const token = String(($('uwToken') && $('uwToken').value) || '').trim();
+    state.uw.token = token;
+    state.uw.mcc = Number(($('uwMcc') && $('uwMcc').value) || 470) || 470;
+    state.uw.mnc = Number(($('uwMnc') && $('uwMnc').value) || 3) || 3;
+    state.uw.radio = String(($('uwRadio') && $('uwRadio').value) || 'lte');
+    state.uw.useForAddress = !($('uwUseForAddress') && !$('uwUseForAddress').checked);
+    try {
+      if (token) localStorage.setItem(UW_TOKEN_KEY, token);
+      else localStorage.removeItem(UW_TOKEN_KEY);
+      localStorage.setItem(UW_SETTINGS_KEY, JSON.stringify({
+        mcc: state.uw.mcc,
+        mnc: state.uw.mnc,
+        radio: state.uw.radio,
+        useForAddress: state.uw.useForAddress
+      }));
+    } catch (_) {}
+    updateUwHint();
+    setStatus(token ? 'Unwired Labs token saved in localStorage.' : 'Unwired Labs token cleared.');
+  }
+
+  function clearUwToken() {
+    if ($('uwToken')) $('uwToken').value = '';
+    state.uw.token = '';
+    try { localStorage.removeItem(UW_TOKEN_KEY); } catch (_) {}
+    updateUwHint();
+    setStatus('Unwired Labs token cleared from this browser.');
+  }
+
+  function updateUwHint() {
+    const el = $('uwHint');
+    if (!el) return;
+    if (state.uw.token) {
+      el.textContent = 'Token saved locally · MCC ' + state.uw.mcc + ' / MNC ' + state.uw.mnc + ' / ' + (state.uw.radio || 'lte') +
+        '. Use “Locate by LAC/CI” for empty-address cells, or Geocode addresses.';
+    } else {
+      el.innerHTML = 'No token yet. <a href="' + UW_DOCS_URL + '" target="_blank" rel="noopener">Open Unwired Labs docs</a>, create a token, paste it above, then Save.';
+    }
+  }
+
+  function requireUwToken() {
+    const token = String(state.uw.token || ($('uwToken') && $('uwToken').value) || '').trim();
+    if (token) {
+      state.uw.token = token;
+      return token;
+    }
+    alert('Set your Unwired Labs access token first.\nOpening API documentation…');
+    openUwDocs();
+    if ($('uwToken')) {
+      try { $('uwToken').focus(); } catch (_) {}
+    }
+    updateUwHint();
+    return null;
+  }
+
+  function parseCellInt(v) {
+    const s = String(v == null ? '' : v).trim();
+    if (!s || s === '0' || s.toLowerCase() === 'nan') return null;
+    if (/^0x[0-9a-f]+$/i.test(s)) {
+      const n = parseInt(s, 16);
+      return isFinite(n) ? n : null;
+    }
+    // hex-looking without prefix when has letters
+    if (/^[0-9a-f]+$/i.test(s) && /[a-f]/i.test(s)) {
+      const n = parseInt(s, 16);
+      return isFinite(n) ? n : null;
+    }
+    const n = parseInt(s, 10);
+    return isFinite(n) ? n : null;
+  }
+
+  function guessMnc(provider, network) {
+    const p = (String(provider || '') + ' ' + String(network || '')).toUpperCase();
+    if (/GRAMEEN|\bGP\b/.test(p)) return 1;
+    if (/ROBI|AKTEL|AXIATA/.test(p)) return 2;
+    if (/BANGLA|BLINK|ORASCOM|SHEBA/.test(p)) return 3;
+    if (/TELETALK/.test(p)) return 4;
+    if (/AIRTEL/.test(p)) return 7;
+    return null;
+  }
+
+  function getMncListFromUi() {
+    const sel = $('uwMnc');
+    if (sel && sel.options && sel.options.length) {
+      const list = [];
+      for (let i = 0; i < sel.options.length; i++) {
+        const n = Number(sel.options[i].value);
+        if (isFinite(n) && list.indexOf(n) < 0) list.push(n);
+      }
+      if (list.length) return list;
+    }
+    return [1, 2, 3, 4, 7];
+  }
+
+  function getRadioListAll() {
+    // Try all radio types (selected default first when present)
+    const preferred = String(($('uwRadio') && $('uwRadio').value) || state.uw.radio || 'lte');
+    const all = ['lte', 'umts', 'gsm'];
+    return [preferred].concat(all.filter(r => r !== preferred));
+  }
+
+  function findCachedCellHit(mcc, lac, cid, mncList) {
+    const mncs = mncList || getMncListFromUi();
+    for (let i = 0; i < mncs.length; i++) {
+      const ck = cellCacheKey(mcc, mncs[i], lac, cid);
+      const hit = state.cellCache[ck];
+      if (hit && hit.lat != null && isFinite(hit.lat)) {
+        return Object.assign({ mnc: mncs[i], cacheKey: ck }, hit);
+      }
+    }
+    return null;
+  }
+
+  function cellCacheKey(mcc, mnc, lac, cid) {
+    return [mcc, mnc, lac, cid].join(':');
+  }
+
+  function setCellProgress(done, total, label) {
+    const wrap = $('cellProgressWrap');
+    if (!wrap) return;
+    const pct = total ? Math.round((done / total) * 100) : 0;
+    wrap.classList.add('on');
+    if ($('cellProgressBar')) $('cellProgressBar').style.width = pct + '%';
+    if ($('cellProgressText')) $('cellProgressText').textContent = label || (done + ' / ' + total);
+    if ($('cellProgressPct')) $('cellProgressPct').textContent = pct + '%';
+  }
+  function hideCellProgress() {
+    const wrap = $('cellProgressWrap');
+    if (!wrap) return;
+    wrap.classList.remove('on');
+    if ($('cellProgressBar')) $('cellProgressBar').style.width = '0%';
+  }
+
+  async function unwiredLocateCell(lac, cid, mcc, mnc, radio) {
+    const token = requireUwToken();
+    if (!token) throw new Error('No Unwired Labs token');
+    const body = {
+      token,
+      radio: radio || state.uw.radio || 'lte',
+      mcc: Number(mcc),
+      mnc: Number(mnc),
+      cells: [{ lac: Number(lac), cid: Number(cid) }],
+      address: 1
+    };
+    const res = await fetch(UW_PROCESS_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+      body: JSON.stringify(body)
+    });
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const data = await res.json();
+    if (!data || data.status === 'error') {
+      throw new Error((data && (data.message || data.error)) || 'Cell locate failed');
+    }
+    const lat = Number(data.lat);
+    const lng = Number(data.lon != null ? data.lon : data.lng);
+    if (!isFinite(lat) || !isFinite(lng)) throw new Error('No coordinates in response');
+    return {
+      lat, lng,
+      address: data.address && data.address !== 'Not available' ? String(data.address) : '',
+      accuracy: data.accuracy,
+      balance: data.balance
+    };
+  }
+
+  async function unwiredGeocodeAddress(q) {
+    const token = String(state.uw.token || '').trim();
+    if (!token) return null;
+    const url = UW_SEARCH_URL + '?token=' + encodeURIComponent(token) +
+      '&q=' + encodeURIComponent(q) + '&format=json&limit=1&countrycodes=bd';
+    const res = await fetch(url, { headers: { 'Accept': 'application/json' } });
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const data = await res.json();
+    if (data && data.status === 'error') throw new Error(data.message || data.error || 'Geocode error');
+    // Response shapes: { address: [{lat,lon,display_name}] } or array
+    let hit = null;
+    if (Array.isArray(data)) hit = data[0];
+    else if (data && Array.isArray(data.address)) hit = data.address[0];
+    else if (data && data.lat != null) hit = data;
+    if (!hit) return null;
+    const lat = Number(hit.lat);
+    const lng = Number(hit.lon != null ? hit.lon : hit.lng);
+    if (!isFinite(lat) || !isFinite(lng)) return null;
+    return {
+      lat, lng,
+      display: hit.display_name || hit.display || q
+    };
+  }
+
+  function addrKey(addr) {
+    return String(addr || '').trim().replace(/\s+/g, ' ').toUpperCase();
+  }
+
+  /** Human label: Address/LAC cell × Unwired Labs / OpenStreetMap */
+  function geoOriginLabel(c) {
+    if (!c) return 'Unknown';
+    const kind = c.kind || c.source || '';
+    let method = 'Unknown';
+    if (kind === 'address' || kind === 'geocode') method = 'Address';
+    else if (kind === 'lac_cell' || kind === 'cell') method = 'LAC/CI cell';
+    else if (kind === 'parsed') method = 'Parsed from text';
+    else if (kind === 'coords') method = 'Mapped lat/lng';
+    else if (kind) method = String(kind);
+
+    const p = String(c.provider || '');
+    let provider = '';
+    if (p === 'unwired') provider = 'Unwired Labs';
+    else if (p === 'nominatim') provider = 'OpenStreetMap (Nominatim)';
+    else if (p) provider = p;
+
+    if (kind === 'lac_cell' || kind === 'cell') {
+      if (!provider) provider = 'Unwired Labs';
+      let extra = '';
+      if (c.mnc != null && c.mnc !== '') extra += ' · MNC ' + c.mnc;
+      if (c.radio) extra += ' / ' + c.radio;
+      return method + ' · ' + provider + extra;
+    }
+    return provider ? (method + ' · ' + provider) : method;
+  }
+
+  function stampGeoOrigin(rec, kind, provider, extra) {
+    if (!rec) return;
+    rec.geoKind = kind;
+    rec.geoProvider = provider || '';
+    if (extra && extra.mnc != null) rec.geoMnc = extra.mnc;
+    if (extra && extra.radio) rec.geoRadio = extra.radio;
+  }
+
+  function resolveCoords(rec) {
+    let lat = rec.lat, lng = rec.lng;
+    if (lat != null && lng != null && isFinite(lat) && isFinite(lng) && Math.abs(lat) <= 90 && Math.abs(lng) <= 180) {
+      if (rec.geoKind) {
+        return {
+          lat, lng,
+          source: rec.geoKind === 'lac_cell' ? 'cell' : (rec.geoKind === 'address' ? 'geocode' : 'coords'),
+          kind: rec.geoKind,
+          provider: rec.geoProvider || '',
+          mnc: rec.geoMnc,
+          radio: rec.geoRadio
+        };
+      }
+      return { lat, lng, source: 'coords', kind: 'coords', provider: '' };
+    }
+    const candidates = [];
+    [getGeoQuery(rec), getSavedAddress(rec), getAddrText(rec)].forEach(t => {
+      const s = String(t || '').trim();
+      if (s && candidates.indexOf(s) < 0) candidates.push(s);
+    });
+    for (let i = 0; i < candidates.length; i++) {
+      const text = candidates[i];
+      const parsed = parseLatLngFromText(text);
+      if (parsed) return { lat: parsed.lat, lng: parsed.lng, source: 'parsed', kind: 'parsed', provider: '' };
+      const key = addrKey(text);
+      if (key && state.geoCache[key] && state.geoCache[key].lat != null && isFinite(state.geoCache[key].lat)) {
+        const g = state.geoCache[key];
+        return {
+          lat: g.lat, lng: g.lng, source: 'geocode',
+          kind: 'address', provider: g.via || 'nominatim'
+        };
+      }
+    }
+    // LAC/CI cell cache (Unwired Labs) — try all MNCs in dropdown list
+    const lac = parseCellInt(rec.lac);
+    const cid = parseCellInt(rec.ci);
+    if (lac != null && cid != null) {
+      const mcc = Number(state.uw.mcc || 470);
+      const hit = findCachedCellHit(mcc, lac, cid, getMncListFromUi());
+      if (hit) {
+        return {
+          lat: hit.lat, lng: hit.lng, source: 'cell',
+          kind: 'lac_cell', provider: hit.via || 'unwired',
+          mnc: hit.mnc, radio: hit.radio
+        };
+      }
+    }
+    return null;
+  }
+
+  function setGeoProgress(done, total, label) {
+    const wrap = $('geoProgressWrap');
+    const pct = total ? Math.round((done / total) * 100) : 0;
+    wrap.classList.add('on');
+    $('geoProgressBar').style.width = pct + '%';
+    $('geoProgressText').textContent = (label || (done + ' / ' + total));
+    $('geoProgressPct').textContent = pct + '%';
+  }
+  function hideGeoProgress() {
+    $('geoProgressWrap').classList.remove('on');
+    $('geoProgressBar').style.width = '0%';
+  }
+
+  function colorForAparty(a) {
+    let h = 0;
+    const s = String(a || '');
+    for (let i = 0; i < s.length; i++) h = ((h << 5) - h) + s.charCodeAt(i);
+    return PATH_COLORS[Math.abs(h) % PATH_COLORS.length];
+  }
+
+  function fmtMinutes(sec) {
+    const total = Math.max(0, Number(sec) || 0);
+    const mins = total / 60;
+    if (total <= 0) return '0 min';
+    if (mins < 1) return total + 's (' + mins.toFixed(1) + ' min)';
+    if (mins < 10) return mins.toFixed(1) + ' min';
+    return Math.round(mins) + ' min';
+  }
+
+  function locLabel(p) {
+    if (p && p.address) return String(p.address);
+    if (p && p.lat != null && p.lng != null) return Number(p.lat).toFixed(5) + ', ' + Number(p.lng).toFixed(5);
+    return '-';
+  }
+
+  function bearingDeg(lat1, lng1, lat2, lng2) {
+    const toRad = d => d * Math.PI / 180;
+    const toDeg = r => r * 180 / Math.PI;
+    const φ1 = toRad(lat1), φ2 = toRad(lat2);
+    const Δλ = toRad(lng2 - lng1);
+    const y = Math.sin(Δλ) * Math.cos(φ2);
+    const x = Math.cos(φ1) * Math.sin(φ2) - Math.sin(φ1) * Math.cos(φ2) * Math.cos(Δλ);
+    return (toDeg(Math.atan2(y, x)) + 360) % 360;
+  }
+
+  function midLatLng(a, b) {
+    return [(a.lat + b.lat) / 2, (a.lng + b.lng) / 2];
+  }
+
+  function arrowMarker(latlng, color, angle, popupHtml) {
+    const icon = L.divIcon({
+      className: 'path-arrow-wrap',
+      html: `<div style="width:22px;height:22px;transform:rotate(${angle}deg);filter:drop-shadow(0 1px 2px rgba(0,0,0,.35))">
+        <svg width="22" height="22" viewBox="0 0 22 22" xmlns="http://www.w3.org/2000/svg">
+          <polygon points="11,2 20,19 11,15 2,19" fill="${color}" stroke="#1b2631" stroke-width="1.2"/>
+        </svg>
+      </div>`,
+      iconSize: [22, 22],
+      iconAnchor: [11, 11]
+    });
+    const m = L.marker(latlng, { icon, interactive: true, keyboard: false });
+    if (popupHtml) m.bindPopup(popupHtml, { maxWidth: 320 });
+    return m;
+  }
+
+  /** Numbered where→where label on edge midpoint, e.g. 1→2 */
+  function edgeStepLabelMarker(latlng, color, fromIdx, toIdx, popupHtml) {
+    const label = (fromIdx + 1) + '→' + (toIdx + 1);
+    const icon = L.divIcon({
+      className: 'path-edge-label-wrap',
+      html: `<div style="background:#fff;color:${color};border:2px solid ${color};border-radius:12px;font:bold 11px Segoe UI,Tahoma,sans-serif;padding:2px 7px;white-space:nowrap;box-shadow:0 1px 4px rgba(0,0,0,.28)">${label}</div>`,
+      iconSize: [48, 22],
+      iconAnchor: [24, 28]
+    });
+    const m = L.marker(latlng, { icon, interactive: true, keyboard: false, zIndexOffset: 600 });
+    if (popupHtml) m.bindPopup(popupHtml, { maxWidth: 320 });
+    m.bindTooltip(`Move ${label}`, { direction: 'top', opacity: 0.95 });
+    return m;
+  }
+
+  /** Offset a latlng slightly along a bearing (meters) for separating arrow vs label */
+  function offsetLatLng(lat, lng, bearingDegVal, meters) {
+    const R = 6378137;
+    const br = bearingDegVal * Math.PI / 180;
+    const lat1 = lat * Math.PI / 180;
+    const lng1 = lng * Math.PI / 180;
+    const dr = meters / R;
+    const lat2 = Math.asin(Math.sin(lat1) * Math.cos(dr) + Math.cos(lat1) * Math.sin(dr) * Math.cos(br));
+    const lng2 = lng1 + Math.atan2(Math.sin(br) * Math.sin(dr) * Math.cos(lat1), Math.cos(dr) - Math.sin(lat1) * Math.sin(lat2));
+    return [lat2 * 180 / Math.PI, lng2 * 180 / Math.PI];
+  }
+
+  function bpartyListHtml(bparties, limit) {
+    const list = Object.keys(bparties || {}).map(bp => ({
+      bp,
+      count: bparties[bp].count || 0,
+      duration: bparties[bp].duration || 0
+    })).sort((a, b) => b.count - a.count || b.duration - a.duration);
+    if (!list.length) return '<div class="muted">No B-Party recorded at this stop</div>';
+    const top = list.slice(0, limit || 8);
+    let html = '<ul>';
+    top.forEach(x => {
+      html += `<li><b>${esc(x.bp)}</b> — ${x.count} call(s), ${esc(fmtMinutes(x.duration))}</li>`;
+    });
+    html += '</ul>';
+    if (list.length > top.length) html += `<div class="muted">+${list.length - top.length} more B-Party</div>`;
+    return html;
+  }
+
+  function stopPopupHtml(aparty, p, idx, total) {
+    const role = idx === 0 ? 'START' : (idx === total - 1 ? 'END' : 'STOP');
+    const geoLine = p.geoOrigin || geoOriginLabel(p);
+    return `<div class="popup-cdr">
+      <h4>#${idx + 1} ${role}</h4>
+      <div><b>A-Party:</b> ${esc(aparty)}</div>
+      <div><b>Address / where:</b> ${esc(locLabel(p))}</div>
+      <div><b>Location from:</b> ${esc(geoLine)}</div>
+      <div class="muted">${esc(p.from_dt)}${p.to_dt !== p.from_dt ? ' → ' + esc(p.to_dt) : ''}</div>
+      <div><b>Events:</b> ${p.count} &nbsp;·&nbsp; <b>Minutes:</b> ${esc(fmtMinutes(p.duration))} <span class="muted">(${esc(fmtDur(p.duration))})</span></div>
+      <div style="margin-top:6px"><b>B-Party called:</b></div>
+      ${bpartyListHtml(p.bparties, 8)}
+      <div class="muted" style="margin-top:6px">Double-click marker for full CDR log table</div>
+    </div>`;
+  }
+
+  function segmentPopupHtml(aparty, a, b, segIdx) {
+    return `<div class="popup-cdr">
+      <h4>Move #${segIdx + 1} (datetime order)</h4>
+      <div><b>A-Party:</b> ${esc(aparty)}</div>
+      <div><b>From:</b> ${esc(locLabel(a))}</div>
+      <div class="muted">Location from: ${esc(a.geoOrigin || geoOriginLabel(a))}</div>
+      <div><b>To:</b> ${esc(locLabel(b))}</div>
+      <div class="muted">Location from: ${esc(b.geoOrigin || geoOriginLabel(b))}</div>
+      <div class="muted">${esc(a.to_dt || a.from_dt)} → ${esc(b.from_dt)}</div>
+      <div style="margin-top:6px"><b>At from-stop:</b> ${a.count} events · ${esc(fmtMinutes(a.duration))}</div>
+      <div><b>At to-stop:</b> ${b.count} events · ${esc(fmtMinutes(b.duration))}</div>
+      <div style="margin-top:6px"><b>B-Party at from:</b></div>
+      ${bpartyListHtml(a.bparties, 5)}
+      <div style="margin-top:6px"><b>B-Party at to:</b></div>
+      ${bpartyListHtml(b.bparties, 5)}
+    </div>`;
+  }
+
+  function setPathLegend(items) {
+    const el = $('pathLegend');
+    if (!el) return;
+    if (!items || !items.length) { el.innerHTML = ''; return; }
+    el.innerHTML = items.map(it =>
+      `<span class="legend-chip" title="${escAttr(it.label)}"><i style="background:${it.color}"></i>${esc(it.label)}</span>`
+    ).join('');
+  }
+
+  function fmtDt(d) {
+    if (!d || isNaN(d)) return '-';
+    const pad = n => String(n).padStart(2,'0');
+    return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+  }
+
+  async function loadWorkspace() {
+    loadGeoCache();
+    loadCellCache();
+    loadUwSettings();
+    loadAddrField();
+    setStatus('Loading IndexedDB storage…');
+    const payload = await idbGet();
+    if (!payload || !Array.isArray(payload.datasets) || !payload.datasets.length) {
+      state.datasets = [];
+      state.records = [];
+      updateStats();
+      renderNoLocList();
+      setStatus('No analyzer workspace found. Open CDR i2 Analyzer, map files, Save, then Load storage here.');
+      return;
+    }
+    state.datasets = payload.datasets.map(d => {
+      let records = [];
+      if (Array.isArray(d.rows)) records = d.rows.map(unpackRecord);
+      else if (Array.isArray(d.records)) records = d.records.map(unpackRecord);
+      return {
+        id: d.id,
+        name: d.name,
+        sheet: d.sheet,
+        mapping: d.mapping || {},
+        target: d.target || '',
+        savedAt: d.savedAt || '',
+        records,
+        headers: Array.isArray(d.headers) ? d.headers.map(String) : [],
+        rawMatrix: Array.isArray(d.rawMatrix) ? d.rawMatrix : null,
+      };
+    });
+
+    flattenRecords();
+    const targets = [...new Set(state.datasets.map(d => d.target).filter(Boolean))];
+    $('selTarget').innerHTML = '<option value="">All subjects</option>' +
+      targets.map(t => `<option value="${escAttr(t)}">${esc(t)}</option>`).join('');
+
+    let tmin = null, tmax = null;
+    for (let i = 0; i < state.records.length; i++) {
+      const r = state.records[i];
+      if (!r.start) continue;
+      const t = r.start.getTime();
+      if (tmin == null || t < tmin) tmin = t;
+      if (tmax == null || t > tmax) tmax = t;
+    }
+    if (tmin != null) {
+      $('dtFrom').value = toLocalInput(new Date(tmin));
+      $('dtTo').value = toLocalInput(new Date(tmax));
+    }
+
+    refreshApartySelect();
+    updateStats();
+    renderNoLocList();
+    $('loadHint').textContent =
+      `Loaded ${state.datasets.length} file(s) / ${state.records.length.toLocaleString()} rows from IndexedDB · ${payload.updatedAt || ''}`;
+    $('addrMapHint').textContent =
+      `Using storage field “${fieldLabel(state.addrField)}” as Address. Change below and Apply — no file needed.`;
+    if ($('selAddrCol')) $('selAddrCol').value = state.addrField || 'address';
+    ensureMap();
+    setStatus(`Loaded ${state.records.length.toLocaleString()} CDR records. Click Build / refresh map.`);
+    // Defer heavy map build so UI stays responsive
+    setTimeout(() => buildMap(), 30);
+  }
+
+  function flattenRecords() {
+    const out = [];
+    state.datasets.forEach(d => {
+      const recs = d.records || [];
+      for (let i = 0; i < recs.length; i++) {
+        const r = recs[i];
+        r._dsId = d.id;
+        r._rowIndex = i;
+        out.push(r);
+      }
+    });
+    state.records = out;
+  }
+
+  function applyAddressMappingFromUi() {
+    const field = ($('selAddrCol') && $('selAddrCol').value) || 'address';
+    state.addrField = field;
+    saveAddrField();
+    $('addrMapHint').textContent =
+      `Applied “${fieldLabel(field)}” from loaded storage for map / path / geocode.`;
+    setStatus('Address field: ' + fieldLabel(field) + ' — rebuilding map…');
+    updateStats(filteredRecords());
+    renderNoLocList();
+    buildMap();
+  }
+
+  function getNoLocationRecords() {
+    return filteredRecords().filter(r => !resolveCoords(r));
+  }
+
+  /** No coords AND empty Address column only (not the full no-location set) */
+  function getEmptyAddressRecords() {
+    return filteredRecords().filter(r => !resolveCoords(r) && !getSavedAddress(r));
+  }
+
+  function renderNoLocList() {
+    const allNoLoc = getNoLocationRecords();
+    const rows = getEmptyAddressRecords();
+    let withText = 0;
+    for (let i = 0; i < allNoLoc.length; i++) {
+      if (getSavedAddress(allNoLoc[i])) withText++;
+    }
+    if ($('noLocCount')) $('noLocCount').textContent = String(rows.length);
+    if ($('noLocAddrText')) $('noLocAddrText').textContent = String(withText);
+    if ($('noLocEmpty')) $('noLocEmpty').textContent = String(rows.length);
+    const preview = $('noLocPreview');
+    if (!preview) return;
+    if (!rows.length) {
+      preview.innerHTML = withText
+        ? `<div class="hint">No empty-address rows. ${withText} no-location row(s) already have Address — use <b>Geocode addresses</b> (not listed here).</div>`
+        : '<div class="hint">No empty-address rows in current filters.</div>';
+      return;
+    }
+    const show = rows.slice(0, 30);
+    let html = `<div class="hint" style="margin-bottom:6px">Showing only <b>empty Address</b> rows (${rows.length}). Rows with address text are hidden from this list.</div>`;
+    for (let i = 0; i < show.length; i++) {
+      const r = show[i];
+      html += `<div style="margin-bottom:5px;padding-bottom:5px;border-bottom:1px solid #e8ecef">
+        <b>${i+1}.</b> ${esc(fmtDt(r.start))} · ${esc(r.aparty||'-')} → ${esc(r.bparty||'-')}<br>
+        <span style="color:#5d6d7e">Address: (empty) · LAC/CI: ${esc((r.lac||'-')+' / '+(r.ci||'-'))} · ${esc(r.source||'')}</span>
+      </div>`;
+    }
+    if (rows.length > show.length) {
+      html += `<div class="hint">Showing ${show.length} of ${rows.length}. Use Show full list / Export CSV.</div>`;
+    }
+    preview.innerHTML = html;
+  }
+
+  function openNoLocModal() {
+    const rows = getEmptyAddressRecords();
+    state.noLocLogs = rows;
+    state.modalLogs = rows;
+    $('modalTitle').textContent = 'CDR rows with empty Address';
+    $('modalMeta').innerHTML =
+      `${rows.length} row(s) with empty Address (and no coordinates)<br>` +
+      `Rows that already have Address text are not listed — geocode those via <b>Geocode addresses</b>.`;
+    $('modalFilter').value = '';
+    renderModalRows('');
+    $('logModal').classList.add('open');
+  }
+
+  function exportNoLocCsv() {
+    const rows = getEmptyAddressRecords();
+    const header = ['datetime','duration_sec','usage','aparty','bparty','network','provider','imei','lac','ci','address','lat','lng','source','reason'];
+    const lines = [header.join(',')];
+    rows.forEach(r => {
+      lines.push([
+        fmtDt(r.start), Number(r.duration || 0), r.usage || r.usage_class || '',
+        r.aparty, r.bparty, r.network, r.provider, r.imei, r.lac, r.ci,
+        getSavedAddress(r), r.lat, r.lng, r.source, 'empty_address'
+      ].map(csvCell).join(','));
+    });
+    const blob = new Blob(['\ufeff' + lines.join('\n')], { type: 'text/csv;charset=utf-8' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'cdr_empty_address.csv';
+    a.click();
+    URL.revokeObjectURL(a.href);
+  }
+
+  function refreshApartySelect() {
+    const counts = {};
+    filteredRecords().forEach(r => {
+      const a = String(r.aparty || '').trim();
+      if (!a) return;
+      counts[a] = (counts[a] || 0) + 1;
+    });
+    const list = Object.keys(counts).sort((a,b)=>counts[b]-counts[a] || a.localeCompare(b));
+    const prev = $('selAparty').value;
+    $('selAparty').innerHTML = '<option value="">Select A-Party…</option>' +
+      list.map(a => `<option value="${escAttr(a)}">${esc(a)} (${counts[a]})</option>`).join('');
+    if (prev && counts[prev]) $('selAparty').value = prev;
+  }
+
+  function toLocalInput(d) {
+    const pad = n => String(n).padStart(2,'0');
+    return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  }
+  function parseLocalInput(v) {
+    const d = new Date(v);
+    return isNaN(d) ? null : d.getTime();
+  }
+
+  function filteredRecords() {
+    let from = parseLocalInput($('dtFrom').value);
+    let to = parseLocalInput($('dtTo').value);
+    if ($('dtTo').value && $('dtTo').value.length <= 16 && to != null) to += 59 * 1000;
+    const target = $('selTarget').value;
+    return state.records.filter(r => {
+      if (target && String(r.target || '') !== target) return false;
+      if (!r.start) return true;
+      const t = r.start.getTime();
+      if (from != null && t < from) return false;
+      if (to != null && t > to) return false;
+      return true;
+    });
+  }
+
+  function updateStats(scope) {
+    const rows = scope || state.records;
+    let coords = 0, addr = 0, none = 0;
+    for (let i = 0; i < rows.length; i++) {
+      const r = rows[i];
+      const c = resolveCoords(r);
+      if (c) coords++;
+      else if (hasAddressText(r)) addr++;
+      else none++;
+    }
+    $('wsFiles').textContent = String(state.datasets.length);
+    $('wsRecs').textContent = rows.length.toLocaleString();
+    $('wsCoords').textContent = coords.toLocaleString();
+    $('wsAddr').textContent = addr.toLocaleString();
+    $('wsNone').textContent = none.toLocaleString();
+  }
+
+  function ensureMap() {
+    if (state.map) return;
+    state.map = L.map('map', { zoomControl: true }).setView([23.8103, 90.4125], 7);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      maxZoom: 19,
+      attribution: '&copy; OpenStreetMap'
+    }).addTo(state.map);
+    state.markers = L.layerGroup().addTo(state.map);
+    state.paths = L.layerGroup().addTo(state.map);
+  }
+
+  function buildMap() {
+    ensureMap();
+    const t0 = performance.now();
+    refreshApartySelect();
+    const rows = filteredRecords();
+    updateStats(rows);
+    const intensityMode = $('selIntensity').value;
+    const showHeat = $('chkHeat').checked;
+    const buckets = {};
+    let mapped = 0, missingAddr = 0, missing = 0;
+
+    for (let i = 0; i < rows.length; i++) {
+      const r = rows[i];
+      const c = resolveCoords(r);
+      const text = getGeoQuery(r);
+      if (!c) {
+        if (hasAddressText(r)) missingAddr++;
+        else missing++;
+        continue;
+      }
+      mapped++;
+      const key = c.lat.toFixed(5) + ',' + c.lng.toFixed(5);
+      const origin = geoOriginLabel(c);
+      let b = buckets[key];
+      if (!b) {
+        b = buckets[key] = {
+          lat: c.lat, lng: c.lng, count: 0, duration: 0,
+          address: text || '', source: c.source,
+          kind: c.kind, provider: c.provider,
+          geoOrigins: {},
+          aparties: {}, bparties: {}
+        };
+      }
+      b.count += 1;
+      b.duration += Number(r.duration || 0);
+      if (text && !b.address) b.address = text;
+      if (!b.geoOrigins[origin]) b.geoOrigins[origin] = 0;
+      b.geoOrigins[origin] += 1;
+      const ap = String(r.aparty || '').trim();
+      const bp = String(r.bparty || '').trim();
+      if (ap) {
+        if (!b.aparties[ap]) b.aparties[ap] = { count: 0, duration: 0 };
+        b.aparties[ap].count += 1;
+        b.aparties[ap].duration += Number(r.duration || 0);
+      }
+      if (bp) {
+        if (!b.bparties[bp]) b.bparties[bp] = { count: 0, duration: 0 };
+        b.bparties[bp].count += 1;
+        b.bparties[bp].duration += Number(r.duration || 0);
+      }
+    }
+
+    const points = Object.values(buckets);
+    if (state.heat) { state.map.removeLayer(state.heat); state.heat = null; }
+    state.markers.clearLayers();
+    // Do not auto-draw paths on every build (slow). Use Draw / refresh paths.
+    if (state.paths) state.paths.clearLayers();
+    setPathLegend([]);
+
+    if (showHeat && points.length) {
+      const heatData = new Array(points.length);
+      for (let i = 0; i < points.length; i++) {
+        const p = points[i];
+        const intensity = intensityMode === 'duration'
+          ? Math.max(0.2, Math.log1p(p.duration) / 4)
+          : Math.max(0.2, Math.log1p(p.count));
+        heatData[i] = [p.lat, p.lng, intensity];
+      }
+      state.heat = L.heatLayer(heatData, {
+        radius: 24, blur: 18, maxZoom: 17, minOpacity: 0.3,
+        gradient: { 0.2:'#2ecc71', 0.45:'#f1c40f', 0.7:'#e67e22', 1.0:'#c0392b' }
+      }).addTo(state.map);
+
+      const topMarks = points.slice().sort((a,b)=>b.count-a.count).slice(0, 35);
+      for (let i = 0; i < topMarks.length; i++) {
+        const p = topMarks[i];
+        const topA = Object.keys(p.aparties || {}).sort((x,y)=>p.aparties[y].count-p.aparties[x].count)[0];
+        const markColor = topA ? colorForAparty(topA) : '#3498db';
+        const marker = L.circleMarker([p.lat, p.lng], {
+          radius: 4 + Math.min(8, Math.log1p(p.count) * 1.8),
+          color: '#1b2631', weight: 1, fillColor: markColor, fillOpacity: 0.55
+        }).addTo(state.markers);
+        marker.bindPopup(() => {
+          const aLines = Object.keys(p.aparties || {}).sort((x,y)=>p.aparties[y].count-p.aparties[x].count).slice(0,4)
+            .map(a => `<li><b style="color:${colorForAparty(a)}">■</b> ${esc(a)} — ${p.aparties[a].count} · ${esc(fmtMinutes(p.aparties[a].duration))}</li>`).join('');
+          const origins = Object.keys(p.geoOrigins || {})
+            .sort((x,y)=>(p.geoOrigins[y]||0)-(p.geoOrigins[x]||0))
+            .map(o => `${esc(o)}${(p.geoOrigins[o]||0) > 1 ? ' ×' + p.geoOrigins[o] : ''}`)
+            .join('<br>');
+          return `<div class="popup-cdr">
+            <h4>${esc(p.address || (p.lat.toFixed(5)+', '+p.lng.toFixed(5)))}</h4>
+            <div><b>Events:</b> ${p.count} &nbsp;·&nbsp; <b>Minutes:</b> ${esc(fmtMinutes(p.duration))}</div>
+            <div><b>Location from:</b></div>
+            <div class="muted">${origins || esc(geoOriginLabel(p))}</div>
+            <div class="muted" style="margin-top:4px">addr field: ${esc(fieldLabel(state.addrField))}</div>
+            <div style="margin-top:6px"><b>A-Party:</b></div><ul>${aLines || '<li>-</li>'}</ul>
+            <div style="margin-top:6px"><b>B-Party called:</b></div>
+            ${bpartyListHtml(p.bparties, 5)}
+            <div class="muted" style="margin-top:6px">Double-click for CDR logs</div>
+          </div>`;
+        }, { maxWidth: 320 });
+        marker.on('dblclick', e => {
+          L.DomEvent.stopPropagation(e);
+          if (e.originalEvent) L.DomEvent.preventDefault(e.originalEvent);
+          openLocationLogs({ lat: p.lat, lng: p.lng, address: p.address || '' });
+        });
+      }
+    }
+
+    const top = points.slice().sort((a,b)=>b.count-a.count).slice(0, 15);
+    $('topList').innerHTML = top.length
+      ? top.map((p,i) => `<div style="margin-bottom:6px"><b>${i+1}.</b> ${esc(p.address || (p.lat.toFixed(4)+', '+p.lng.toFixed(4)))}<br><span style="color:#5d6d7e">${p.count} events · ${esc(fmtDur(p.duration))}</span></div>`).join('')
+      : 'No mappable locations in current filters.';
+
+    if (points.length) {
+      try {
+        state.map.fitBounds(L.latLngBounds(points.map(p => [p.lat, p.lng])).pad(0.15), { animate: false });
+      } catch (_) {}
+    }
+
+    renderNoLocList();
+    const ms = Math.round(performance.now() - t0);
+    setStatus(
+      `Mapped ${mapped.toLocaleString()} / ${rows.length.toLocaleString()} · ` +
+      `${points.length} points · geocode needed: ${missingAddr.toLocaleString()} · no loc: ${missing.toLocaleString()} · ${ms}ms` +
+      ` · Address field: ${fieldLabel(state.addrField)}`
+    );
+    setTimeout(() => { try { state.map.invalidateSize(); } catch(_){} }, 100);
+  }
+
+  /** Collapse consecutive same coordinates; keep datetime order; aggregate B-Party/count/minutes */
+  function buildTrackForAparty(aparty, rows) {
+    const events = [];
+    rows.forEach(r => {
+      if (String(r.aparty || '') !== String(aparty)) return;
+      const c = resolveCoords(r);
+      if (!c || !r.start) return;
+      events.push({
+        t: r.start.getTime(),
+        dt: fmtDt(r.start),
+        lat: c.lat,
+        lng: c.lng,
+        address: getAddrText(r) || r.address || '',
+        bparty: String(r.bparty || '').trim(),
+        duration: Number(r.duration || 0),
+        source: c.source,
+        kind: c.kind,
+        provider: c.provider,
+        mnc: c.mnc,
+        radio: c.radio,
+        geoOrigin: geoOriginLabel(c)
+      });
+    });
+    events.sort((a,b)=>a.t-b.t);
+
+    function bumpBparty(stop, bp, dur) {
+      if (!bp) return;
+      if (!stop.bparties[bp]) stop.bparties[bp] = { count: 0, duration: 0 };
+      stop.bparties[bp].count += 1;
+      stop.bparties[bp].duration += dur;
+    }
+
+    const track = [];
+    events.forEach(ev => {
+      const last = track[track.length - 1];
+      const same = last && Math.abs(last.lat - ev.lat) < 1e-5 && Math.abs(last.lng - ev.lng) < 1e-5;
+      if (same) {
+        last.to_dt = ev.dt;
+        last.to_t = ev.t;
+        last.count = (last.count || 1) + 1;
+        last.duration += ev.duration;
+        if (!last.address && ev.address) last.address = ev.address;
+        if (!last.geoOrigin && ev.geoOrigin) last.geoOrigin = ev.geoOrigin;
+        bumpBparty(last, ev.bparty, ev.duration);
+      } else {
+        const stop = {
+          lat: ev.lat, lng: ev.lng, address: ev.address,
+          from_dt: ev.dt, to_dt: ev.dt, from_t: ev.t, to_t: ev.t,
+          count: 1, duration: ev.duration, source: ev.source,
+          kind: ev.kind, provider: ev.provider, mnc: ev.mnc, radio: ev.radio,
+          geoOrigin: ev.geoOrigin || geoOriginLabel(ev),
+          bparties: {}
+        };
+        bumpBparty(stop, ev.bparty, ev.duration);
+        track.push(stop);
+      }
+    });
+    return track;
+  }
+
+  function drawOnePath(aparty, track, color, fillTimeline) {
+    if (track.length < 1) return null;
+    const detailed = !!fillTimeline;
+    const showArrows = (!$('chkPathArrows') || $('chkPathArrows').checked);
+    const latlngs = track.map(p => [p.lat, p.lng]);
+
+    if (track.length >= 2) {
+      L.polyline(latlngs, {
+        color: '#1b2631', weight: detailed ? 8 : 6, opacity: 0.2, lineJoin: 'round', lineCap: 'round', interactive: false
+      }).addTo(state.paths);
+      L.polyline(latlngs, {
+        color, weight: detailed ? 5 : 3.5, opacity: 0.92, lineJoin: 'round', lineCap: 'round'
+      }).bindPopup(
+        `<div class="popup-cdr"><h4>A-Party ${esc(aparty)}</h4>` +
+        `<div>${track.length} stops · edge labels show where→where (1→2…)</div>` +
+        `<div class="muted">${esc(track[0].from_dt)} → ${esc(track[track.length-1].to_dt)}</div></div>`
+      ).addTo(state.paths);
+
+      // Edge where→where numbers on every segment
+      for (let i = 0; i < track.length - 1; i++) {
+        const a = track[i], b = track[i + 1];
+        const segHtml = segmentPopupHtml(aparty, a, b, i);
+        const mid = midLatLng(a, b);
+        const ang = bearingDeg(a.lat, a.lng, b.lat, b.lng);
+
+        L.polyline([[a.lat, a.lng], [b.lat, b.lng]], {
+          color, weight: detailed ? 6 : 4, opacity: 0.05
+        }).bindPopup(segHtml, { maxWidth: 320 }).bindTooltip(
+          `${i + 1}→${i + 2}: ${esc(locLabel(a))} → ${esc(locLabel(b))}`,
+          { sticky: true, opacity: 0.95 }
+        ).addTo(state.paths);
+
+        // Step number chip on the edge (where → where)
+        edgeStepLabelMarker(mid, color, i, i + 1, segHtml).addTo(state.paths);
+
+        if (showArrows && (detailed || track.length <= 12)) {
+          const arrowPos = offsetLatLng(mid[0], mid[1], ang, 18);
+          arrowMarker(arrowPos, color, ang, segHtml).addTo(state.paths);
+        }
+      }
+    }
+
+    // Markers: full detail only for selected A-Party; light mode = start/end only
+    const markIndexes = detailed
+      ? track.map((_, i) => i)
+      : (track.length === 1 ? [0] : [0, track.length - 1]);
+    markIndexes.forEach(i => {
+      const p = track[i];
+      const isStart = i === 0;
+      const isEnd = i === track.length - 1;
+      const fill = isStart ? '#27ae60' : (isEnd ? '#c0392b' : color);
+      const radius = isStart || isEnd ? 8 : 5;
+      const marker = L.circleMarker([p.lat, p.lng], {
+        radius, color: '#1b2631', weight: 1.5, fillColor: fill, fillOpacity: 0.95
+      }).bindPopup(() => stopPopupHtml(aparty, p, i, track.length), { maxWidth: 320 }).addTo(state.paths);
+      marker.on('dblclick', e => {
+        L.DomEvent.stopPropagation(e);
+        if (e.originalEvent) L.DomEvent.preventDefault(e.originalEvent);
+        openLocationLogs({ lat: p.lat, lng: p.lng, address: p.address || '', aparty });
+      });
+      if (detailed) {
+        L.marker([p.lat, p.lng], {
+          icon: L.divIcon({
+            className: '',
+            html: `<div style="background:${fill};color:#fff;border:1px solid #1b2631;border-radius:10px;font:bold 10px Segoe UI;padding:1px 5px">${i+1}</div>`,
+            iconSize: [22, 16], iconAnchor: [-8, 10]
+          }),
+          interactive: false
+        }).addTo(state.paths);
+      }
+    });
+
+    if (fillTimeline) {
+      let html = `<div style="font-size:11px;margin-bottom:6px"><b style="color:${color}">■</b> <b>${esc(aparty)}</b> · ${track.length} stops (datetime order)</div>`;
+      for (let i = 0; i < track.length; i++) {
+        const p = track[i];
+        const next = track[i+1];
+        const bps = Object.keys(p.bparties || {}).sort((x,y)=>(p.bparties[y].count||0)-(p.bparties[x].count||0)).slice(0,3);
+        html += `<div class="path-step" style="border-color:${color}">
+          <b>${i+1}.</b> ${esc(locLabel(p))}<br>
+          <span class="t">${esc(p.from_dt)}${p.to_dt!==p.from_dt?' → '+esc(p.to_dt):''} · ${p.count} events · ${esc(fmtMinutes(p.duration))}</span>`;
+        if (bps.length) {
+          html += `<div class="t">B-Party: ${bps.map(bp => esc(bp)+'('+p.bparties[bp].count+')').join(', ')}</div>`;
+        }
+        if (next) {
+          html += `<div class="t" style="margin-top:2px">→ edge <b>${i+1}→${i+2}</b> · ${esc(next.from_dt)} · ${esc(locLabel(next))}</div>`;
+        }
+        html += `</div>`;
+      }
+      $('pathTimeline').innerHTML = html;
+    }
+    return latlngs;
+  }
+
+  function drawPaths(fit) {
+    ensureMap();
+    state.paths.clearLayers();
+    const rows = filteredRecords();
+    const selected = $('selAparty').value;
+    const drawSelected = $('chkPathSelected').checked && selected;
+    const drawAll = $('chkPathAll').checked;
+    const boundsPts = [];
+    const legend = [];
+
+    if (!drawSelected && !drawAll) {
+      $('pathTimeline').innerHTML = '<div class="hint">Select an A-Party or enable “Show all A-Party paths”.</div>';
+      setPathLegend([]);
+      return;
+    }
+
+    if (drawAll) {
+      const counts = {};
+      rows.forEach(r => {
+        const a = String(r.aparty || '').trim();
+        if (a) counts[a] = (counts[a] || 0) + 1;
+      });
+      const list = Object.keys(counts).sort((a,b)=>counts[b]-counts[a]).slice(0, 12);
+      let drawn = 0;
+      list.forEach(a => {
+        const track = buildTrackForAparty(a, rows);
+        if (track.length < 1) return;
+        const color = colorForAparty(a);
+        const ll = drawOnePath(a, track, color, false);
+        if (ll) {
+          ll.forEach(p => boundsPts.push(p));
+          drawn++;
+          legend.push({ color, label: a + ' (' + counts[a] + ')' });
+        }
+      });
+      $('pathTimeline').innerHTML = `<div class="hint">Showing paths for ${drawn} A-Party number(s) (top by event count, max 12, light mode). Pick one A-Party + Draw selected for detail/arrows.</div>`;
+      if (selected && drawSelected) {
+        const track = buildTrackForAparty(selected, rows);
+        drawOnePath(selected, track, colorForAparty(selected), true);
+        track.forEach(p => boundsPts.push([p.lat, p.lng]));
+      }
+      setPathLegend(legend);
+    } else if (drawSelected) {
+      const color = colorForAparty(selected);
+      const track = buildTrackForAparty(selected, rows);
+      setPathLegend([{ color, label: selected }]);
+      if (!track.length) {
+        $('pathTimeline').innerHTML = '<div class="hint">No mappable locations for this A-Party in the time frame. Geocode addresses or map lat/lng.</div>';
+      } else if (track.length === 1) {
+        drawOnePath(selected, track, color, true);
+        boundsPts.push([track[0].lat, track[0].lng]);
+        setStatus(`A-Party ${selected}: only 1 location in time frame (no from→to line).`);
+      } else {
+        drawOnePath(selected, track, color, true);
+        track.forEach(p => boundsPts.push([p.lat, p.lng]));
+        setStatus(`A-Party ${selected}: ${track.length} stops · ${track[0].from_dt} → ${track[track.length-1].to_dt}`);
+      }
+    }
+
+    if (fit !== false && boundsPts.length) {
+      state.map.fitBounds(L.latLngBounds(boundsPts).pad(0.2));
+    }
+  }
+
+  function clearPaths() {
+    if (state.paths) state.paths.clearLayers();
+    $('pathTimeline').innerHTML = '';
+    setPathLegend([]);
+    setStatus('Paths cleared.');
+  }
+
+  async function geocodeAddresses() {
+    if (state.geocoding || state.cellGeocoding) return;
+    // Prefer Address (saved) for geocoding when records have address text
+    if (state.addrField !== 'address') {
+      const sample = filteredRecords();
+      let withAddr = 0;
+      for (let i = 0; i < sample.length && i < 500; i++) {
+        if (getSavedAddress(sample[i]).length >= 4) withAddr++;
+      }
+      if (withAddr > 0) {
+        state.addrField = 'address';
+        saveAddrField();
+        if ($('selAddrCol')) $('selAddrCol').value = 'address';
+        $('addrMapHint').textContent = 'Geocode uses Address (saved) column because it has text.';
+      }
+    }
+    const rows = filteredRecords();
+    const pending = {};
+    rows.forEach(r => {
+      if (resolveCoords(r)) return;
+      const addr = getGeoQuery(r);
+      if (addr.length < 4) return;
+      const key = addrKey(addr);
+      const cached = state.geoCache[key];
+      if (cached && cached.lat != null && isFinite(cached.lat)) return;
+      pending[key] = addr;
+    });
+    const keys = Object.keys(pending);
+    const useUw = !!(String(state.uw.token || '').trim() && state.uw.useForAddress !== false);
+    if (!useUw && !String(state.uw.token || '').trim()) {
+      $('geoHint').textContent = 'No Unwired token — address via Nominatim. LAC/CI fallback needs a saved Unwired token.';
+    }
+    state.geocoding = true;
+    $('btnGeocode').disabled = true;
+    let ok = 0, fail = 0;
+    if (keys.length) {
+      setGeoProgress(0, keys.length, `0 / ${keys.length}`);
+      for (let i = 0; i < keys.length; i++) {
+        const key = keys[i];
+        const q = pending[key];
+        setGeoProgress(i, keys.length, `${i} / ${keys.length} · ${q.slice(0,42)}`);
+        $('geoHint').textContent = `Geocoding ${i+1}/${keys.length} via ${useUw ? 'Unwired Labs' : 'Nominatim'}: ${q.slice(0,60)}…`;
+        setStatus(`Geocoding ${i+1}/${keys.length} unique addresses…`);
+        try {
+          let hit = null;
+          let via = null;
+          if (useUw) {
+            try {
+              hit = await unwiredGeocodeAddress(q);
+              if (hit) via = 'unwired';
+            } catch (e) { hit = null; }
+          }
+          if (!hit) {
+            const url = 'https://nominatim.openstreetmap.org/search?format=json&limit=1&countrycodes=bd&q=' + encodeURIComponent(q);
+            const res = await fetch(url, { headers: { 'Accept': 'application/json' } });
+            if (!res.ok) throw new Error('HTTP ' + res.status);
+            const data = await res.json();
+            if (data && data[0]) {
+              hit = { lat: parseFloat(data[0].lat), lng: parseFloat(data[0].lon), display: data[0].display_name || q };
+              via = 'nominatim';
+            }
+          }
+          if (hit && isFinite(hit.lat) && isFinite(hit.lng)) {
+            state.geoCache[key] = { lat: hit.lat, lng: hit.lng, display: hit.display || q, via: via || 'nominatim' };
+            rows.forEach(r => {
+              if (r.lat != null && r.lng != null && isFinite(r.lat) && isFinite(r.lng)) return;
+              if (addrKey(getGeoQuery(r)) !== key && addrKey(getSavedAddress(r)) !== key) return;
+              r.lat = hit.lat;
+              r.lng = hit.lng;
+              stampGeoOrigin(r, 'address', via || 'nominatim');
+            });
+            ok++;
+          } else {
+            state.geoCache[key] = { lat: null, lng: null, fail: true };
+            fail++;
+          }
+        } catch (err) {
+          state.geoCache[key] = { lat: null, lng: null, fail: true, err: String(err) };
+          fail++;
+        }
+        saveGeoCache();
+        setGeoProgress(i + 1, keys.length, `${i+1} / ${keys.length}`);
+        await sleep(useUw ? 350 : 1100);
+        if ((i + 1) % 8 === 0) buildMap();
+      }
+    }
+
+    // Fallback: address not found (or empty) → try LAC/CI cell locate when Unwired token is set
+    let cellOk = 0, cellFail = 0, cellTries = 0;
+    const remain = filteredRecords().filter(r =>
+      !resolveCoords(r) && parseCellInt(r.lac) != null && parseCellInt(r.ci) != null
+    );
+    const token = String(state.uw.token || ($('uwToken') && $('uwToken').value) || '').trim();
+    if (remain.length && token) {
+      state.uw.token = token;
+      $('geoHint').textContent =
+        `Address phase: ${ok} ok · ${fail} not found. Falling back to LAC/CI for ${remain.length} row(s)…`;
+      setStatus(`Address not found for some rows — trying LAC/CI cell locate (${remain.length} rows)…`);
+      const cellRes = await locateRowsByCell(remain, { fromGeocode: true });
+      cellOk = cellRes.ok || 0;
+      cellFail = cellRes.fail || 0;
+      cellTries = cellRes.tries || 0;
+    } else if (remain.length && !token) {
+      $('geoHint').textContent =
+        `Address: ${ok} ok · ${fail} not found. ${remain.length} row(s) still need LAC/CI — save Unwired token to auto-fallback.`;
+    }
+
+    state.geocoding = false;
+    $('btnGeocode').disabled = false;
+    if (keys.length) setGeoProgress(keys.length, keys.length, `${keys.length} / ${keys.length} done`);
+    $('geoHint').textContent =
+      `Done: address ${ok} ok / ${fail} not found` +
+      (cellTries ? ` · LAC/CI fallback ${cellOk} ok / ${cellFail} fail (${cellTries} tries)` : (remain.length && !token ? ' · LAC/CI skipped (no token)' : ''));
+    setStatus(
+      `Geocode complete: address ${ok} ok · ${fail} not found` +
+      (cellTries ? ` · LAC/CI ${cellOk} ok` : '') + '. Rebuilding map…'
+    );
+    buildMap();
+    renderNoLocList();
+    setTimeout(hideGeoProgress, 2500);
+    setTimeout(hideCellProgress, 2500);
+  }
+
+  /** Shared LAC/CI Unwired locate for a set of rows (all MNC × radio). */
+  async function locateRowsByCell(rows, opts) {
+    opts = opts || {};
+    const fromGeocode = !!opts.fromGeocode;
+    const token = String(state.uw.token || ($('uwToken') && $('uwToken').value) || '').trim();
+    if (!token) return { ok: 0, fail: 0, tries: 0, cells: 0, skipped: true };
+    state.uw.token = token;
+    saveUwSettingsFromUi();
+    const mcc = Number(state.uw.mcc || 470);
+    const mncList = getMncListFromUi();
+    const radioList = getRadioListAll();
+    const pending = {};
+    (rows || []).forEach(r => {
+      if (resolveCoords(r)) return;
+      const lac = parseCellInt(r.lac);
+      const cid = parseCellInt(r.ci);
+      if (lac == null || cid == null) return;
+      const pk = lac + ':' + cid;
+      const cached = findCachedCellHit(mcc, lac, cid, mncList);
+      if (cached) {
+        r.lat = cached.lat;
+        r.lng = cached.lng;
+        stampGeoOrigin(r, 'lac_cell', cached.via || 'unwired', { mnc: cached.mnc, radio: cached.radio });
+        if (!getSavedAddress(r) && cached.address) r.address = cached.address;
+        return;
+      }
+      if (!pending[pk]) pending[pk] = { lac, cid, rows: [] };
+      pending[pk].rows.push(r);
+    });
+    const keys = Object.keys(pending);
+    if (!keys.length) return { ok: 0, fail: 0, tries: 0, cells: 0 };
+
+    const attemptsPerCell = mncList.length * radioList.length;
+    if (!fromGeocode) {
+      state.cellGeocoding = true;
+      if ($('btnCellGeo')) $('btnCellGeo').disabled = true;
+    }
+    setCellProgress(0, keys.length, `0 / ${keys.length} cells`);
+    if ($('uwHint')) {
+      $('uwHint').textContent =
+        (fromGeocode ? 'Address not found → ' : '') +
+        'Trying MNCs [' + mncList.join(',') + '] × radios [' + radioList.join(',') +
+        '] (max ~' + attemptsPerCell + ' tries/cell).';
+    }
+    let ok = 0, fail = 0, tries = 0;
+    for (let i = 0; i < keys.length; i++) {
+      const item = pending[keys[i]];
+      setCellProgress(i, keys.length, `${i}/${keys.length} · LAC ${item.lac} / CI ${item.cid}`);
+      let found = null;
+      let lastErr = '';
+      outer:
+      for (let mi = 0; mi < mncList.length; mi++) {
+        const mnc = mncList[mi];
+        for (let ri = 0; ri < radioList.length; ri++) {
+          const radio = radioList[ri];
+          tries++;
+          setStatus(
+            `${fromGeocode ? 'Fallback LAC/CI' : 'Unwired'} ${i+1}/${keys.length}: LAC ${item.lac} CI ${item.cid} · MNC ${mnc} · ${radio}` +
+            ` (${mi * radioList.length + ri + 1}/${attemptsPerCell})`
+          );
+          try {
+            found = await unwiredLocateCell(item.lac, item.cid, mcc, mnc, radio);
+            found.mnc = mnc;
+            found.radio = radio;
+            break outer;
+          } catch (err) {
+            lastErr = String(err && err.message ? err.message : err);
+            await sleep(280);
+          }
+        }
+      }
+      if (found) {
+        const ck = cellCacheKey(mcc, found.mnc, item.lac, item.cid);
+        state.cellCache[ck] = {
+          lat: found.lat, lng: found.lng, address: found.address || '',
+          accuracy: found.accuracy, via: 'unwired', radio: found.radio, mnc: found.mnc
+        };
+        item.rows.forEach(r => {
+          r.lat = found.lat;
+          r.lng = found.lng;
+          stampGeoOrigin(r, 'lac_cell', 'unwired', { mnc: found.mnc, radio: found.radio });
+          if (!getSavedAddress(r) && found.address) r.address = found.address;
+        });
+        ok++;
+        if ($('uwHint')) {
+          $('uwHint').textContent =
+            'OK LAC ' + item.lac + '/' + item.cid + ' via MNC ' + found.mnc + ' / ' + found.radio;
+        }
+      } else {
+        mncList.forEach(mnc => {
+          const ck = cellCacheKey(mcc, mnc, item.lac, item.cid);
+          if (!(state.cellCache[ck] && state.cellCache[ck].lat != null)) {
+            state.cellCache[ck] = { lat: null, lng: null, fail: true, err: lastErr || 'No match' };
+          }
+        });
+        fail++;
+      }
+      saveCellCache();
+      setCellProgress(i + 1, keys.length, `${i+1} / ${keys.length} cells`);
+      await sleep(200);
+      if ((i + 1) % 3 === 0) buildMap();
+    }
+    if (!fromGeocode) {
+      state.cellGeocoding = false;
+      if ($('btnCellGeo')) $('btnCellGeo').disabled = false;
+    }
+    return { ok, fail, tries, cells: keys.length };
+  }
+
+  async function locateEmptyAddressByCell() {
+    if (state.cellGeocoding || state.geocoding) return;
+    if (!requireUwToken()) return;
+    const rows = getEmptyAddressRecords().filter(r => parseCellInt(r.lac) != null && parseCellInt(r.ci) != null);
+    if (!rows.length) {
+      setStatus('No empty-address rows with LAC/CI to locate.');
+      $('uwHint').textContent = 'No empty-address + LAC/CI rows in current filters.';
+      return;
+    }
+    const res = await locateRowsByCell(rows, { fromGeocode: false });
+    if (res.skipped) return;
+    if (!res.cells) {
+      setStatus('All empty-address LAC/CI rows already located from cache. Building map…');
+    } else {
+      setStatus(`LAC/CI locate done: ${res.ok} ok · ${res.fail} failed · ${res.tries} API tries. Rebuilding map…`);
+    }
+    setCellProgress(res.cells || 1, res.cells || 1, 'done');
+    buildMap();
+    renderNoLocList();
+    setTimeout(hideCellProgress, 2500);
+  }
+
+  function locKey(lat, lng) {
+    return Number(lat).toFixed(5) + ',' + Number(lng).toFixed(5);
+  }
+
+  function logsAtLocation(lat, lng, apartyFilter) {
+    const key = locKey(lat, lng);
+    return filteredRecords().filter(r => {
+      if (apartyFilter && String(r.aparty || '') !== String(apartyFilter)) return false;
+      const c = resolveCoords(r);
+      if (!c) return false;
+      return locKey(c.lat, c.lng) === key;
+    }).sort((a, b) => {
+      const ta = a.start ? a.start.getTime() : 0;
+      const tb = b.start ? b.start.getTime() : 0;
+      return tb - ta;
+    });
+  }
+
+  function openLocationLogs(opts) {
+    const lat = opts.lat, lng = opts.lng;
+    const aparty = opts.aparty || '';
+    const logs = logsAtLocation(lat, lng, aparty || null);
+    state.modalLogs = logs;
+    const dur = logs.reduce((s, r) => s + Number(r.duration || 0), 0);
+    const titleLoc = opts.address || (lat.toFixed(5) + ', ' + lng.toFixed(5));
+    $('modalTitle').textContent = 'Location CDR logs';
+    $('modalMeta').innerHTML =
+      `${esc(titleLoc)}<br>` +
+      `${logs.length} logs · ${esc(fmtDur(dur))}` +
+      (aparty ? ` · A-Party filter: ${esc(aparty)}` : '') +
+      `<br>Coords: ${lat.toFixed(5)}, ${lng.toFixed(5)} · Double-clicked map circle`;
+    $('modalFilter').value = '';
+    renderModalRows('');
+    $('logModal').classList.add('open');
+  }
+
+  function renderModalRows(q) {
+    q = (q || '').toLowerCase();
+    const rows = state.modalLogs.filter(r => {
+      if (!q) return true;
+      return [
+        fmtDt(r.start), r.usage, r.usage_class, r.aparty, r.bparty,
+        r.network, r.provider, r.imei, r.address, r.source, r.lac, r.ci
+      ].join(' ').toLowerCase().includes(q);
+    });
+    $('modalRows').innerHTML = rows.length ? rows.map((r, i) => `<tr>
+      <td>${i+1}</td>
+      <td>${esc(fmtDt(r.start))}</td>
+      <td>${esc(fmtDur(r.duration))}</td>
+      <td>${esc(r.usage || r.usage_class || '-')}</td>
+      <td>${esc(r.aparty || '-')}</td>
+      <td>${esc(r.bparty || '-')}</td>
+      <td>${esc(r.network || '-')}</td>
+      <td>${esc(r.provider || '-')}</td>
+      <td>${esc(r.imei || '-')}</td>
+      <td>${esc((r.lac || '-') + ' / ' + (r.ci || '-'))}</td>
+      <td>${esc(getSavedAddress(r) || getGeoQuery(r) || '-')}</td>
+      <td>${esc(r.source || '-')}</td>
+    </tr>`).join('') : '<tr><td colspan="12" style="padding:16px;color:#7f8c8d">No CDR logs at this location in current filters</td></tr>';
+  }
+
+  function closeModal() { $('logModal').classList.remove('open'); }
+
+  function csvCell(v) {
+    return '"' + String(v ?? '').replace(/"/g, '""') + '"';
+  }
+
+  function exportModalCsv() {
+    const header = ['datetime','duration_sec','usage','aparty','bparty','network','provider','imei','lac','ci','address','source'];
+    const lines = [header.join(',')];
+    state.modalLogs.forEach(r => {
+      lines.push([
+        fmtDt(r.start), Number(r.duration || 0), r.usage || r.usage_class || '',
+        r.aparty, r.bparty, r.network, r.provider, r.imei, r.lac, r.ci, r.address, r.source
+      ].map(csvCell).join(','));
+    });
+    const blob = new Blob(['\ufeff' + lines.join('\n')], { type: 'text/csv;charset=utf-8' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'cdr_location_logs.csv';
+    a.click();
+    URL.revokeObjectURL(a.href);
+  }
+
+  function sleep(ms){ return new Promise(r => setTimeout(r, ms)); }
+  function fmtDur(sec) {
+    sec = Number(sec || 0);
+    if (sec <= 0) return '0s';
+    const h = Math.floor(sec / 3600);
+    const m = Math.floor((sec % 3600) / 60);
+    const s = sec % 60;
+    if (h) return h + 'h' + String(m).padStart(2,'0') + 'm';
+    if (m) return m + 'm' + String(s).padStart(2,'0') + 's';
+    return s + 's';
+  }
+  function esc(s){ return String(s??'').replace(/[&<>"']/g,c=>({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c])); }
+  function escAttr(s){ return esc(s).replace(/\n/g,' '); }
+
+  function setPanel(open){
+    $('app').classList.toggle('panel-open', !!open);
+    if (state.map) setTimeout(() => state.map.invalidateSize(), 240);
+  }
+  $('btnPanel').onclick = () => setPanel(true);
+  $('btnClosePanel').onclick = () => setPanel(false);
+  $('panelScrim').onclick = () => setPanel(false);
+
+  $('btnLoad').onclick = () => loadWorkspace().catch(err => setStatus('Load failed: ' + err));
+  $('btnBuild').onclick = () => buildMap();
+  $('btnApply').onclick = () => buildMap();
+  $('btnGeocode').onclick = () => geocodeAddresses().catch(err => {
+    state.geocoding = false;
+    $('btnGeocode').disabled = false;
+    hideGeoProgress();
+    setStatus('Geocode failed: ' + err);
+  });
+  $('btnDrawPath').onclick = () => drawPaths(true);
+  $('btnClearPath').onclick = () => clearPaths();
+  let buildTimer = null;
+  function scheduleBuild() {
+    clearTimeout(buildTimer);
+    buildTimer = setTimeout(() => buildMap(), 150);
+  }
+  $('selIntensity').onchange = () => scheduleBuild();
+  $('selTarget').onchange = () => scheduleBuild();
+  $('chkHeat').onchange = () => scheduleBuild();
+  $('selAparty').onchange = () => { if ($('chkPathSelected').checked) drawPaths(true); };
+  $('chkPathSelected').onchange = () => { if ($('chkPathSelected').checked) drawPaths(true); else clearPaths(); };
+  $('chkPathAll').onchange = () => { if ($('chkPathAll').checked) drawPaths(true); };
+  $('chkPathArrows').onchange = () => { if ($('chkPathSelected').checked || $('chkPathAll').checked) drawPaths(true); };
+  $('dtFrom').onchange = $('dtTo').onchange = () => {
+    refreshApartySelect();
+    renderNoLocList();
+  };
+  $('btnApplyAddr').onclick = () => applyAddressMappingFromUi();
+  $('btnShowNoLoc').onclick = () => openNoLocModal();
+  $('btnExportNoLoc').onclick = () => exportNoLocCsv();
+
+  $('btnSaveUw').onclick = () => saveUwSettingsFromUi();
+  $('btnClearUw').onclick = () => clearUwToken();
+  $('btnOpenUwDocs').onclick = () => openUwDocs();
+  $('btnCellGeo').onclick = () => locateEmptyAddressByCell().catch(err => {
+    state.cellGeocoding = false;
+    if ($('btnCellGeo')) $('btnCellGeo').disabled = false;
+    hideCellProgress();
+    setStatus('LAC/CI locate failed: ' + err);
+  });
+  if ($('uwToken')) {
+    $('uwToken').addEventListener('focus', () => {
+      if (!String($('uwToken').value || '').trim() && !state._uwDocsOpened) {
+        state._uwDocsOpened = true;
+        openUwDocs();
+      }
+    });
+  }
+
+  $('btnCloseModal').onclick = closeModal;
+  $('logModal').onclick = e => { if (e.target.id === 'logModal') closeModal(); };
+  $('modalFilter').oninput = e => renderModalRows(e.target.value);
+  $('btnExportLocCsv').onclick = exportModalCsv;
+  document.addEventListener('keydown', e => {
+    if (e.key === 'Escape') closeModal();
+  });
+
+  // Prevent map zoom on marker double-click
+  loadCellCache();
+  loadUwSettings();
+  ensureMap();
+  loadWorkspace().catch(() => setStatus('Could not open IndexedDB. Use the analyzer on this same browser/origin first.'));
+})();
+</script>
+</body>
+</html>
+"""
+
+
+def write_heatmap() -> Path:
+    OUT_DIR.mkdir(parents=True, exist_ok=True)
+    DOCS_DIR.mkdir(parents=True, exist_ok=True)
+    out = OUT_DIR / "heatmap.html"
+    docs = DOCS_DIR / "heatmap.html"
+    out.write_text(HEATMAP_HTML, encoding="utf-8")
+    docs.write_text(HEATMAP_HTML, encoding="utf-8")
+    print(f"HEATMAP: {docs}")
+    return docs
+
+
+if __name__ == "__main__":
+    write_heatmap()

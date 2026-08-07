@@ -1,0 +1,3349 @@
+#!/usr/bin/env python3
+"""Build offline CDR i2 analyzer HTML with multi-file upload + per-file column mapping."""
+
+from __future__ import annotations
+
+import urllib.request
+from pathlib import Path
+
+OUT_DIR = Path(r"C:\Users\rahim\Downloads\cdr\output")
+DOCS_DIR = Path(r"C:\Users\rahim\Downloads\cdr\docs")
+VENDOR = OUT_DIR / "vendor"
+VENDOR.mkdir(parents=True, exist_ok=True)
+DOCS_DIR.mkdir(parents=True, exist_ok=True)
+
+VIS_JS = VENDOR / "vis-network.min.js"
+XLSX_JS = VENDOR / "xlsx.full.min.js"
+VIS_URL = "https://unpkg.com/vis-network@9.1.9/standalone/umd/vis-network.min.js"
+XLSX_URL = "https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"
+
+
+def ensure(path: Path, url: str, min_size: int = 50_000) -> None:
+    if path.exists() and path.stat().st_size >= min_size:
+        return
+    print(f"Downloading {url}")
+    urllib.request.urlretrieve(url, path)
+
+
+HTML = r"""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>CDR i2 Analyzer — Upload & Map Columns</title>
+<script src="vendor/xlsx.full.min.js"></script>
+<script src="vendor/vis-network.min.js"></script>
+<style>
+:root {
+  --bg:#f7f4ef; --ink:#1b2631; --muted:#5d6d7e; --line:#d5d8dc;
+  --red:#c0392b; --blue:#2980b9; --green:#27ae60; --purple:#8e44ad; --accent:#1a5276;
+}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%;background:var(--bg);color:var(--ink);font-family:"Segoe UI",Tahoma,sans-serif;overflow:hidden}
+#app{display:grid;grid-template-columns:360px 1fr;height:100vh;height:100dvh}
+aside{border-right:1px solid var(--line);background:linear-gradient(180deg,#fff,#f4f1ea);padding:12px;overflow:auto;z-index:2;-webkit-overflow-scrolling:touch}
+#btnPanel,#panelScrim,#btnClosePanel{display:none}
+#btnPanel{
+  position:absolute;top:12px;left:12px;z-index:4;
+  border:1px solid #aeb6bf;background:#fff;border-radius:8px;padding:8px 12px;font-size:13px;font-weight:600;cursor:pointer;
+  box-shadow:0 2px 8px rgba(0,0,0,.08)
+}
+#btnPanel:hover{background:#f2f4f6}
+.aside-head{display:none}
+h1{font-size:15px;margin:0 0 4px}
+.sub{font-size:11px;color:var(--muted);margin-bottom:10px;line-height:1.35}
+.box{background:#fff;border:1px solid var(--line);border-radius:8px;padding:10px;margin-bottom:10px}
+.box h2{font-size:12px;margin:0 0 8px;color:var(--accent)}
+.row{display:grid;gap:4px;margin-bottom:7px;font-size:11px}
+label{color:var(--muted)}
+input,select,textarea,button{font:inherit}
+input[type=text],input[type=search],input[type=datetime-local],select,textarea{
+  width:100%;border:1px solid var(--line);border-radius:6px;padding:6px 8px;font-size:12px;background:#fff
+}
+textarea{min-height:64px;resize:vertical}
+button{border:1px solid #aeb6bf;background:#fff;border-radius:8px;padding:7px 10px;font-size:12px;cursor:pointer}
+button:hover{background:#f2f4f6}
+button.primary{background:#1b2631;color:#fff;border-color:#1b2631}
+button.danger{background:#fdedec;border-color:#e6b0aa;color:#922b21}
+.btns{display:flex;gap:6px;flex-wrap:wrap}
+.btns button{flex:1}
+.drop{
+  border:2px dashed #b0bec5;border-radius:10px;padding:16px;text-align:center;background:#fbfcfd;
+  color:var(--muted);font-size:12px;cursor:pointer
+}
+.drop.drag{border-color:var(--blue);background:#eaf2f8;color:var(--blue)}
+.filelist{display:grid;gap:6px;margin-top:8px}
+.fileitem{
+  border:1px solid var(--line);border-radius:8px;padding:8px;background:#fafbfc;font-size:11px;cursor:pointer
+}
+.fileitem.active{border-color:var(--blue);background:#eaf2f8}
+.fileitem .name{font-weight:600;color:var(--ink);word-break:break-all}
+  .fileitem .meta{color:var(--muted);margin-top:2px}
+  .fileitem .actions{display:flex;gap:6px;margin-top:6px}
+  .fileitem .actions button{flex:1;padding:4px 6px;font-size:11px}
+  .badge{display:inline-block;padding:1px 6px;border-radius:999px;background:#eaf2f8;color:#1a5276;font-size:10px}
+.badge.ok{background:#e8f8f5;color:#0e6655}
+.badge.wait{background:#fef9e7;color:#9a7d0a}
+.mapgrid{display:grid;gap:6px}
+.maprow{display:grid;grid-template-columns:110px 1fr;gap:6px;align-items:center}
+.maprow label{font-size:11px;color:var(--ink)}
+.hint{font-size:10px;color:var(--muted);line-height:1.35;margin-top:6px}
+.stat{display:grid;grid-template-columns:1fr auto;gap:4px 8px;font-size:11px}
+.stat b{font-variant-numeric:tabular-nums}
+.filters{display:grid;gap:6px;font-size:12px}
+.filters label{display:flex;gap:8px;align-items:center;cursor:pointer;color:var(--ink)}
+#search{min-height:70px}
+main{position:relative;min-width:0;min-height:0}
+#network{width:100%;height:100%;background:var(--bg);cursor:grab}
+#toolbar{
+  position:absolute;top:12px;left:12px;right:12px;z-index:3;
+  display:flex;gap:8px;flex-wrap:wrap;justify-content:space-between;align-items:flex-start;pointer-events:none
+}
+#toolbar .toolbar-left,#toolbar .toolbar-right{display:flex;gap:6px;flex-wrap:wrap;pointer-events:auto}
+#toolbar button:disabled{opacity:.45;cursor:not-allowed}
+
+#hint{display:none}
+#empty{
+  position:absolute;inset:0;display:flex;align-items:center;justify-content:center;z-index:1;
+  color:var(--muted);font-size:14px;text-align:center;padding:40px;pointer-events:none
+}
+#empty .empty-msg{
+  max-width:420px;line-height:1.55;padding:12px 14px;
+  background:#ffffffd8;border:1px solid var(--line);border-radius:10px
+}
+#edgeModal{display:none;position:fixed;inset:0;z-index:50;background:rgba(20,28,36,.45);align-items:center;justify-content:center;padding:24px}
+#edgeModal.open{display:flex}
+.modal-card{width:min(1100px,96vw);max-height:88vh;background:#fff;border-radius:12px;border:1px solid #d5d8dc;box-shadow:0 18px 50px rgba(0,0,0,.28);display:flex;flex-direction:column;overflow:hidden}
+.modal-head{display:flex;gap:12px;justify-content:space-between;padding:14px 16px;border-bottom:1px solid #e5e8eb;background:linear-gradient(180deg,#fff,#f7f4ef)}
+.modal-head h3{margin:0 0 4px;font-size:15px}
+.modal-head .meta{font-size:11px;color:var(--muted);line-height:1.4}
+.modal-tools{display:flex;gap:8px;padding:10px 16px;border-bottom:1px solid #eee;background:#fafafa}
+.modal-tools input{flex:1}
+.modal-body{overflow:auto}
+.modal-body table{width:100%;border-collapse:collapse;font-size:11px}
+.modal-body th{position:sticky;top:0;background:#1b2631;color:#fff;text-align:left;padding:8px;white-space:nowrap}
+.modal-body td{padding:6px 8px;border-bottom:1px solid #eef1f4;vertical-align:top;max-width:220px;word-break:break-word}
+.modal-body tr:nth-child(even) td{background:#fafbfc}
+.preview{max-height:120px;overflow:auto;border:1px solid var(--line);border-radius:6px;margin-top:6px}
+.preview table{width:100%;border-collapse:collapse;font-size:10px}
+.preview th,.preview td{border-bottom:1px solid #eee;padding:3px 4px;white-space:nowrap}
+.preview th{background:#1b2631;color:#fff;position:sticky;top:0}
+#error{display:none;position:absolute;inset:40px;z-index:5;background:#fff5f5;border:2px solid #c0392b;border-radius:12px;padding:18px;color:#922b21;white-space:pre-wrap;overflow:auto}
+
+/* ---- Mobile / tablet ---- */
+@media (max-width: 900px){
+  #app{grid-template-columns:1fr}
+  aside{
+    position:fixed;inset:0 auto 0 0;width:min(360px,92vw);max-width:100%;
+    transform:translateX(-105%);transition:transform .22s ease;
+    border-right:1px solid var(--line);box-shadow:none;z-index:25;
+    padding-top:0;
+  }
+  #app.panel-open aside{transform:translateX(0);box-shadow:10px 0 32px rgba(0,0,0,.22)}
+  .aside-head{
+    display:flex;align-items:center;justify-content:space-between;gap:10px;
+    position:sticky;top:0;z-index:2;margin:0 -12px 10px;padding:12px 12px 10px;
+    background:linear-gradient(180deg,#fff,#f4f1ea);border-bottom:1px solid var(--line);
+  }
+  .aside-head h1{margin:0;font-size:15px}
+  #btnClosePanel{
+    display:inline-flex;align-items:center;justify-content:center;
+    width:36px;height:36px;min-width:36px;padding:0;border-radius:10px;
+    border:1px solid #aeb6bf;background:#fff;font-size:20px;line-height:1;font-weight:700;
+    color:#1b2631;cursor:pointer;
+  }
+  #btnClosePanel:hover{background:#f2f4f6}
+  .aside-title-desktop{display:none}
+  #btnPanel{display:inline-flex;align-items:center;gap:6px}
+  #app.panel-open #btnPanel{visibility:hidden;pointer-events:none}
+  #panelScrim{display:none;position:fixed;inset:0;background:rgba(20,28,36,.42);z-index:20;border:0;padding:0;cursor:pointer}
+  #app.panel-open #panelScrim{display:block}
+  #toolbar{
+    top:56px;left:12px;right:12px;justify-content:flex-start;
+    max-height:calc(100% - 120px);overflow:auto
+  }
+  #toolbar button{padding:6px 8px;font-size:11px}
+  #hint{left:8px;right:8px;bottom:8px;font-size:10px;line-height:1.35}
+  #empty{padding:72px 16px 20px;font-size:13px;align-items:center;justify-content:center}
+  #empty .empty-msg{max-width:min(420px,100%)}
+  #error{inset:72px 12px 12px}
+  .maprow{grid-template-columns:1fr}
+  .maprow label{margin-bottom:2px}
+  #edgeModal{padding:8px;align-items:stretch}
+  .modal-card{width:100%;max-height:100%;border-radius:10px}
+  .modal-head{flex-wrap:wrap;align-items:flex-start}
+  .modal-tools{flex-wrap:wrap}
+  .modal-body{overflow:auto;-webkit-overflow-scrolling:touch}
+  .modal-body th,.modal-body td{font-size:10px;padding:5px 6px}
+  .fileitem .actions{flex-wrap:wrap}
+  .btns button{min-height:36px}
+  input,select,textarea,button{font-size:16px} /* avoid iOS zoom on focus */
+  input[type=text],input[type=search],input[type=datetime-local],select,textarea,button{font-size:14px}
+  #search{min-height:56px;font-size:14px}
+}
+@media (max-width: 480px){
+  aside{width:100vw}
+  #toolbar{gap:4px}
+  #hint{display:none}
+}
+</style>
+</head>
+<body>
+<button id="panelScrim" type="button" aria-label="Close panel"></button>
+<div id="app">
+  <aside id="sidePanel">
+    <div class="aside-head">
+      <h1>CDR i2 Analyzer</h1>
+      <button id="btnClosePanel" type="button" aria-label="Hide sidebar">×</button>
+    </div>
+    <h1 class="aside-title-desktop">CDR i2 Analyzer</h1>
+    <div class="sub">Upload multiple XLSX/CSV → map columns per file → build relation chart</div>
+    <div class="navlinks" style="display:flex;gap:8px;flex-wrap:wrap;margin:0 0 10px">
+      <a href="heatmap.html" style="font-size:12px;color:#1a5276;font-weight:600">Open heatmap analyzer →</a>
+    </div>
+
+    <div class="box">
+      <h2>1) Upload files</h2>
+      <div id="drop" class="drop">Drop XLSX / CSV here<br>or click to browse (multi-select)</div>
+      <input id="fileInput" type="file" accept=".xlsx,.xls,.csv,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" multiple hidden />
+      <div class="filelist" id="fileList"></div>
+      <div class="hint">Each file needs its own column key mapping before it is added to analysis.</div>
+    </div>
+
+    <div class="box" id="mapBox" style="display:none">
+      <h2>2) Column key mapping</h2>
+      <div class="row">
+        <label>Selected file</label>
+        <div id="mapFileName" style="font-size:12px;font-weight:600;word-break:break-all"></div>
+      </div>
+      <div class="row">
+        <label>Sheet</label>
+        <select id="sheetSelect"></select>
+      </div>
+      <div class="row">
+        <label>Target / Subject MSISDN (optional override)</label>
+        <input id="targetOverride" type="text" placeholder="Auto from sheet name / APARTY most common"/>
+      </div>
+      <div class="mapgrid" id="mapGrid"></div>
+      <div class="preview" id="preview"></div>
+      <div class="btns" style="margin-top:8px">
+        <button id="btnAutoMap" type="button">Auto-detect</button>
+        <button id="btnAddMapped" class="primary" type="button">Save mapping & add</button>
+      </div>
+      <div class="hint">Required: <b>start</b>, <b>aparty</b>, <b>bparty</b>. Optional: <b>Latitude</b>, <b>Longitude</b> (best for heatmap), Address, LAC/CI, IMEI, etc.</div>
+    </div>
+
+    <div class="box">
+      <h2>3) Workspace + Local Storage</h2>
+      <div class="stat" id="wsStats">
+        <span>Mapped files</span><b id="wsFiles">0</b>
+        <span>Records</span><b id="wsRecs">0</b>
+        <span>Subjects</span><b id="wsTargets">0</b>
+        <span>Storage</span><b id="wsStorage">-</b>
+      </div>
+      <div class="btns" style="margin-top:8px">
+        <button id="btnBuild" class="primary" type="button">Build / Refresh chart</button>
+        <button id="btnLoadStorage" type="button">Load storage</button>
+      </div>
+      <div class="btns" style="margin-top:6px">
+        <button id="btnExportRelations" type="button">Download relations CSV</button>
+        <button id="btnSaveStorage" type="button">Save now</button>
+        <button id="btnClearWs" class="danger" type="button">Clean storage</button>
+      </div>
+      <div class="hint" id="storageHint">Relations CSV columns: label (A-Party), bparty, count, duration, from_datetime, to_datetime. File name = A-Party number when single.</div>
+    </div>
+
+    <div class="box">
+      <h2>Date / Time</h2>
+      <div class="row"><label>From</label><input id="dtFrom" type="datetime-local"/></div>
+      <div class="row"><label>To</label><input id="dtTo" type="datetime-local"/></div>
+      <div class="btns">
+        <button id="btnApplyTime" class="primary" type="button">Apply</button>
+        <button id="btnResetTime" type="button">Full range</button>
+      </div>
+      <div class="hint" id="timeHint">Build chart first</div>
+    </div>
+
+    <div class="box">
+      <h2>Usage type</h2>
+      <div class="filters" id="usageFilters"></div>
+      <div class="btns">
+        <button id="btnUsageAll" type="button">All</button>
+        <button id="btnUsageCalls" type="button">Calls</button>
+        <button id="btnUsageSms" type="button">SMS</button>
+      </div>
+      <div class="hint" id="usageHint">All usage types</div>
+    </div>
+
+    <div class="box">
+      <h2>Multi number search (highlight)</h2>
+      <textarea id="search" placeholder="Paste multiple numbers&#10;88016...&#10;017..."></textarea>
+      <div class="btns">
+        <button id="btnClearSearch" type="button">Clear</button>
+        <span id="searchHit" style="font-size:11px;color:#922b21;align-self:center">No search</span>
+      </div>
+    </div>
+
+    <div class="box">
+      <h2>Node kinds</h2>
+      <div class="filters">
+        <label><input type="checkbox" id="f_target" checked> Subjects (red)</label>
+        <label><input type="checkbox" id="f_common" checked> Common contacts (blue)</label>
+        <label><input type="checkbox" id="f_exclusive" checked> Exclusive contacts (green)</label>
+        <label><input type="checkbox" id="f_imei" checked> Handset icon — Common IMEI (purple)</label>
+        <label><input type="checkbox" id="f_loc_cell" checked> Tower icon — Common LAC/CI (teal)</label>
+        <label><input type="checkbox" id="f_loc_addr" checked> Pin icon — Common Address (orange)</label>
+      </div>
+      <div class="hint" id="detectHint">Common IMEI / location detected after Build.</div>
+    </div>
+
+    <div class="box">
+      <div id="details" style="font-size:11px;white-space:pre-wrap;min-height:48px">Upload files, map columns, then build chart.</div>
+    </div>
+
+    <div class="box" id="nodeEditBox">
+      <h2>Node identity (optional)</h2>
+      <div class="hint" id="nodeEditHint">Select a node to set nickname, comment, or change its icon for analysis.</div>
+      <div id="nodeEditFields" style="display:none">
+        <div class="row">
+          <label>Node ID</label>
+          <div id="nodeEditId" style="font-size:11px;font-weight:600;word-break:break-all;color:var(--ink)"></div>
+        </div>
+        <div class="row">
+          <label>Nickname</label>
+          <input id="nodeNickname" type="text" placeholder="e.g. Suspect-1 / Wife / Office"/>
+        </div>
+        <div class="row">
+          <label>Comment / note</label>
+          <textarea id="nodeComment" placeholder="Optional investigation notes for this node" style="min-height:56px"></textarea>
+        </div>
+        <div class="row">
+          <label>Icon</label>
+          <select id="nodeIcon"></select>
+        </div>
+        <div class="btns">
+          <button id="btnSaveNodeAnn" class="primary" type="button">Save identity</button>
+          <button id="btnClearNodeAnn" type="button">Clear</button>
+        </div>
+        <div class="hint">Saved with workspace in IndexedDB. Nickname is shown on the chart; comment appears on hover.</div>
+      </div>
+    </div>
+  </aside>
+
+  <main>
+    <button id="btnPanel" type="button" aria-expanded="false" aria-controls="sidePanel">☰ Panel</button>
+    <div id="toolbar">
+      <div class="toolbar-left">
+        <button id="btnUndo" type="button" disabled title="Ctrl+Z">Undo</button>
+        <button id="btnRedo" type="button" disabled title="Ctrl+Y">Redo</button>
+        <button id="btnDeleteNode" class="danger" type="button" disabled title="Hide selected node(s) temporarily">Hide node</button>
+        <button id="btnHideEdge" class="danger" type="button" disabled title="Hide selected link(s) temporarily">Hide edge</button>
+        <button id="btnHideIsolated" type="button" title="Hide nodes that have no link to another node">Hide isolated</button>
+        <button id="btnRestoreHidden" type="button" disabled title="Show all temporarily hidden nodes and edges">Restore hidden</button>
+      </div>
+      <div class="toolbar-right">
+        <button id="btnFit" class="primary">Fit view</button>
+        <button id="btnResetLayout" type="button">Reset layout</button>
+        <button id="btnRespace" type="button">Re-space</button>
+        <button id="btnLabels">Labels: KEY</button>
+        <button id="btnPhysics">Physics: OFF</button>
+        <button id="btnExportSvg" type="button" title="Export current graph as SVG">Export SVG</button>
+        <button id="btnExportPdf" type="button" title="Export current graph as PDF">Export PDF</button>
+      </div>
+    </div>
+    <div id="empty"><div class="empty-msg">Upload XLSX/CSV via <b>Panel</b>.<br>Map columns for each file, then click <b>Build / Refresh chart</b>.</div></div>
+    <div id="network"></div>
+    <div id="error"></div>
+    <div id="hint">Pin icon = address · Tower icon = LAC/CI · Handset icon = IMEI · double-click link for logs</div>
+  </main>
+</div>
+
+<div id="edgeModal">
+  <div class="modal-card">
+    <div class="modal-head">
+      <div>
+        <h3 id="modalTitle">Edge CDR logs</h3>
+        <div class="meta" id="modalMeta"></div>
+      </div>
+      <button id="btnCloseModal" type="button">Close</button>
+    </div>
+    <div class="modal-tools">
+      <input id="modalFilter" type="search" placeholder="Filter logs…"/>
+      <button id="btnExportCsv" type="button">Export CSV</button>
+    </div>
+    <div class="modal-body">
+      <table>
+        <thead>
+          <tr>
+            <th>#</th><th>Date Time</th><th>Duration</th><th>Usage</th>
+            <th>A-Party</th><th>B-Party</th><th>Network</th><th>Provider</th>
+            <th>IMEI</th><th>LAC/CI</th><th>Address</th><th>Source</th>
+          </tr>
+        </thead>
+        <tbody id="modalRows"></tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<script>
+(function () {
+  'use strict';
+
+  const FIELD_DEFS = [
+    { key: 'start', label: 'Start / DateTime *', required: true, aliases: ['START_DTTIME','START','START TIME','START_TIME','DATETIME','DATE_TIME','CALLDATE','CALL_DATE','EVENT_TIME'] },
+    { key: 'aparty', label: 'A-Party *', required: true, aliases: ['APARTY','A_PARTY','A PARTY','CALLING','CALLING_NO','MSISDN','ANUMBER','A_NUMBER'] },
+    { key: 'bparty', label: 'B-Party *', required: true, aliases: ['BPARTY','B_PARTY','B PARTY','CALLED','CALLED_NO','BNUMBER','B_NUMBER','OTHER_PARTY'] },
+    { key: 'duration', label: 'Duration', required: false, aliases: ['CALL_DURATION','CALL DURATION','DURATION','DUR','CALLDURATION'] },
+    { key: 'usage', label: 'Usage type', required: false, aliases: ['USAGE_TYPE','USAGE TYPE','USAGE','CALL_TYPE','CALLTYPE','SERVICETYPE','SERVICE_TYPE'] },
+    { key: 'provider', label: 'Provider', required: false, aliases: ['PROVIDER_NAME','PROVIDER NAME','PROVIDER','OPERATOR'] },
+    { key: 'network', label: 'Network', required: false, aliases: ['NETWORK_TYPE','NETWORK TYPE','NETWORK','TECH'] },
+    { key: 'imei', label: 'IMEI', required: false, aliases: ['IMEI','IMEI_A','IMEIA'] },
+    { key: 'imsi', label: 'IMSI', required: false, aliases: ['IMSI','IMSIA','IMSI_A'] },
+    { key: 'lac', label: 'LAC', required: false, aliases: ['LACSTARTA','LAC','LAC_A','LACA'] },
+    { key: 'ci', label: 'Cell / CI', required: false, aliases: ['CISTARTA','CI','CELL','CELL_ID','CELLID'] },
+    { key: 'address', label: 'Address / Site (optional)', required: false, aliases: ['ADDRESS','SITE','LOCATION','CELL_ADDRESS','SITE_ADDRESS','CELL LOCATION','CELLLOCATION'] },
+    { key: 'lat', label: 'Latitude (optional)', required: false, aliases: ['LAT','LATITUDE','LATI','Y_COORD','GPS_LAT','LAT_DEG','LAT DEGREE','LATITUDE_A','START_LAT','END_LAT','SITE_LAT','CELL_LAT','NORTHING'] },
+    { key: 'lng', label: 'Longitude (optional)', required: false, aliases: ['LNG','LON','LONG','LONGITUDE','LONGI','X_COORD','GPS_LON','GPS_LNG','LON_DEG','LONG DEGREE','LONGITUDE_A','START_LON','END_LON','START_LNG','END_LNG','SITE_LON','SITE_LNG','CELL_LON','CELL_LNG','EASTING'] },
+  ];
+
+  const LS_KEY = 'cdr_i2_analyzer_datasets_v1'; // legacy (quota-limited) — migrated away
+  const IDB_NAME = 'cdr_i2_analyzer_db';
+  const IDB_STORE = 'workspace';
+  const IDB_KEY = 'datasets_v2';
+  // Append-only: lat/lng at end so older packed rows still unpack correctly
+  const REC_COLS = ['start','aparty','bparty','duration','usage','usage_class','provider','network','imei','imsi','lac','ci','address','source','sheet','target','lat','lng'];
+
+  const state = {
+    staging: [],
+    datasets: [],
+    DATA: null,
+    network: null,
+    nodesDS: null,
+    edgesDS: null,
+    rawNodes: [],
+    rawEdges: [],
+    labelMode: 'key',
+    physicsOn: false,
+    activeStagingId: null,
+    modal: { logs: [], edge: null },
+    lastSaveBytes: 0,
+    hiddenNodes: {},
+    history: { undo: [], redo: [] },
+    annotations: {},
+    activeNodeId: null,
+    hiddenEdges: {},
+  };
+
+  function $(id) { return document.getElementById(id); }
+  function showError(msg) {
+    const el = $('error');
+    el.style.display = 'block';
+    el.textContent = msg;
+  }
+  function clearError() { $('error').style.display = 'none'; }
+
+  function storageSizeLabel(bytes) {
+    if (!bytes) return 'empty';
+    if (bytes < 1024) return bytes + ' B';
+    if (bytes < 1024*1024) return (bytes/1024).toFixed(1) + ' KB';
+    return (bytes/1024/1024).toFixed(2) + ' MB';
+  }
+
+  function packRecord(r) {
+    const start = r.start instanceof Date
+      ? Math.floor(r.start.getTime() / 1000)
+      : (typeof r.start === 'number' ? r.start : (r.start ? Math.floor(new Date(r.start).getTime()/1000) : null));
+    return [
+      start,
+      r.aparty || '',
+      r.bparty || '',
+      r.duration || 0,
+      r.usage || '',
+      r.usage_class || '',
+      r.provider || '',
+      r.network || '',
+      r.imei || '',
+      r.imsi || '',
+      r.lac || '',
+      r.ci || '',
+      r.address || '',
+      r.source || '',
+      r.sheet || '',
+      r.target || '',
+      r.lat != null && r.lat !== '' ? Number(r.lat) : '',
+      r.lng != null && r.lng !== '' ? Number(r.lng) : '',
+    ];
+  }
+
+  function unpackRecord(row) {
+    // support compact array rows and old object rows
+    if (!Array.isArray(row)) {
+      return Object.assign({}, row, {
+        start: row.start ? new Date(row.start) : null,
+        lat: row.lat != null && row.lat !== '' ? Number(row.lat) : null,
+        lng: row.lng != null && row.lng !== '' ? Number(row.lng) : null,
+      });
+    }
+    const o = {};
+    REC_COLS.forEach((k, i) => { o[k] = row[i]; });
+    o.start = (typeof o.start === 'number' && o.start > 0) ? new Date(o.start * 1000) : null;
+    o.duration = Number(o.duration || 0);
+    o.lat = (o.lat !== '' && o.lat != null && !isNaN(Number(o.lat))) ? Number(o.lat) : null;
+    o.lng = (o.lng !== '' && o.lng != null && !isNaN(Number(o.lng))) ? Number(o.lng) : null;
+    return o;
+  }
+
+  function serializeDatasets(datasets) {
+    return datasets.map(d => ({
+      id: d.id,
+      name: d.name,
+      sheet: d.sheet,
+      mapping: d.mapping,
+      target: d.target,
+      savedAt: d.savedAt || new Date().toISOString(),
+      cols: REC_COLS,
+      rows: (d.records || []).map(packRecord),
+      headers: Array.isArray(d.headers) ? d.headers : [],
+      rawMatrix: Array.isArray(d.rawMatrix) ? d.rawMatrix : null,
+    }));
+  }
+
+  function reviveDatasets(rawList) {
+    return (rawList || []).map(d => {
+      let records = [];
+      if (Array.isArray(d.rows)) {
+        records = d.rows.map(unpackRecord);
+      } else if (Array.isArray(d.records)) {
+        // legacy object format from localStorage
+        records = d.records.map(unpackRecord);
+      }
+      return {
+        id: d.id,
+        name: d.name,
+        sheet: d.sheet,
+        mapping: d.mapping || {},
+        target: d.target || '',
+        savedAt: d.savedAt || '',
+        records,
+        headers: Array.isArray(d.headers) ? d.headers.map(String) : [],
+        rawMatrix: Array.isArray(d.rawMatrix) ? d.rawMatrix : null,
+      };
+    });
+  }
+
+  function idbOpen() {
+    return new Promise((resolve, reject) => {
+      const req = indexedDB.open(IDB_NAME, 1);
+      req.onupgradeneeded = () => {
+        const db = req.result;
+        if (!db.objectStoreNames.contains(IDB_STORE)) db.createObjectStore(IDB_STORE);
+      };
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error || new Error('IndexedDB open failed'));
+    });
+  }
+
+  function idbPut(value) {
+    return idbOpen().then(db => new Promise((resolve, reject) => {
+      const tx = db.transaction(IDB_STORE, 'readwrite');
+      tx.objectStore(IDB_STORE).put(value, IDB_KEY);
+      tx.oncomplete = () => { db.close(); resolve(); };
+      tx.onerror = () => { db.close(); reject(tx.error || new Error('IndexedDB write failed')); };
+    }));
+  }
+
+  function idbGet() {
+    return idbOpen().then(db => new Promise((resolve, reject) => {
+      const tx = db.transaction(IDB_STORE, 'readonly');
+      const req = tx.objectStore(IDB_STORE).get(IDB_KEY);
+      req.onsuccess = () => { db.close(); resolve(req.result || null); };
+      req.onerror = () => { db.close(); reject(req.error || new Error('IndexedDB read failed')); };
+    }));
+  }
+
+  function idbDelete() {
+    return idbOpen().then(db => new Promise((resolve, reject) => {
+      const tx = db.transaction(IDB_STORE, 'readwrite');
+      tx.objectStore(IDB_STORE).delete(IDB_KEY);
+      tx.oncomplete = () => { db.close(); resolve(); };
+      tx.onerror = () => { db.close(); reject(tx.error || new Error('IndexedDB delete failed')); };
+    }));
+  }
+
+  function updateStorageStats() {
+    const n = state.datasets.length;
+    const bytes = state.lastSaveBytes || 0;
+    $('wsStorage').textContent = bytes ? storageSizeLabel(bytes) : (n ? 'IndexedDB' : 'empty');
+    $('storageHint').textContent = n
+      ? `IndexedDB store: ${n} mapped file(s)${bytes ? ', ~' + storageSizeLabel(bytes) : ''}. Auto-saves after add/remove. Clean storage wipes saved data.`
+      : 'No saved workspace yet. Mapped files auto-save to IndexedDB after “Save mapping & add”.';
+  }
+
+  async function saveDatasetsToStorage() {
+    try {
+      const payload = {
+        version: 2,
+        engine: 'indexeddb',
+        updatedAt: new Date().toISOString(),
+        datasets: serializeDatasets(state.datasets),
+        annotations: state.annotations || {},
+      };
+      const json = JSON.stringify(payload);
+      state.lastSaveBytes = json.length;
+      await idbPut(payload);
+      // clear legacy localStorage to free quota / avoid confusion
+      try { localStorage.removeItem(LS_KEY); } catch (e) {}
+      updateStorageStats();
+      return { ok: true, size: json.length };
+    } catch (err) {
+      const msg = String(err && err.message ? err.message : err);
+      showError('Failed to save IndexedDB storage:\n' + msg);
+      return { ok: false, error: msg };
+    }
+  }
+
+  async function migrateLegacyLocalStorage() {
+    try {
+      const raw = localStorage.getItem(LS_KEY);
+      if (!raw) return false;
+      const payload = JSON.parse(raw);
+      const list = reviveDatasets(payload.datasets || []);
+      if (!list.length) {
+        localStorage.removeItem(LS_KEY);
+        return false;
+      }
+      state.datasets = list;
+      const saved = await saveDatasetsToStorage();
+      if (saved.ok) {
+        try { localStorage.removeItem(LS_KEY); } catch (e) {}
+        return true;
+      }
+      return false;
+    } catch (e) {
+      return false;
+    }
+  }
+
+  async function loadDatasetsFromStorage(silent) {
+    try {
+      let payload = await idbGet();
+      if (!payload) {
+        // one-time migrate from old localStorage if present
+        const migrated = await migrateLegacyLocalStorage();
+        if (migrated) {
+          if (!silent) {
+            $('details').textContent =
+              `Migrated old localStorage data into IndexedDB.\nFiles: ${state.datasets.length}\nClick Build / Refresh chart.`;
+          }
+          renderFileList();
+          renderMapper();
+          return true;
+        }
+        if (!silent) $('details').textContent = 'No saved data in IndexedDB.';
+        updateStorageStats();
+        return false;
+      }
+      // estimate size
+      try { state.lastSaveBytes = JSON.stringify(payload).length; } catch (e) { state.lastSaveBytes = 0; }
+      const list = reviveDatasets(payload.datasets || []);
+      state.datasets = list;
+      state.annotations = payload.annotations && typeof payload.annotations === 'object' ? payload.annotations : {};
+      state.staging = [];
+      state.activeStagingId = null;
+      state.activeNodeId = null;
+      state.DATA = null;
+      if (state.network) { state.network.destroy(); state.network = null; }
+      $('empty').style.display = 'flex';
+      renderFileList();
+      renderMapper();
+      updateStorageStats();
+      if (!silent) {
+        $('details').textContent =
+          `Loaded from IndexedDB\nFiles: ${list.length}\nRecords: ${list.reduce((a,d)=>a+d.records.length,0)}\nUpdated: ${payload.updatedAt || '-'}\n\nClick Build / Refresh chart.`;
+      }
+      return true;
+    } catch (err) {
+      showError('Failed to load IndexedDB storage:\n' + (err && err.message ? err.message : err));
+      return false;
+    }
+  }
+
+  async function clearStorageAndWorkspace() {
+    try { await idbDelete(); } catch (e) {}
+    try { localStorage.removeItem(LS_KEY); } catch (e) {}
+    state.staging = [];
+    state.datasets = [];
+    state.DATA = null;
+    state.activeStagingId = null;
+    state.activeNodeId = null;
+    state.annotations = {};
+    state.lastSaveBytes = 0;
+    if (state.network) { state.network.destroy(); state.network = null; }
+    $('empty').style.display = 'flex';
+    $('usageFilters').innerHTML = '';
+    renderFileList();
+    renderMapper();
+    updateStorageStats();
+    resetNodeEditPanel();
+    $('details').textContent = 'Cleaned: workspace + IndexedDB (+ old localStorage) removed.';
+  }
+
+  async function removeDataset(id) {
+    state.datasets = state.datasets.filter(d => d.id !== id);
+    state.staging = state.staging.filter(s => s.id !== id);
+    if (state.activeStagingId === id) state.activeStagingId = state.staging[0] ? state.staging[0].id : null;
+    await saveDatasetsToStorage();
+    renderFileList();
+    renderMapper();
+    $('details').textContent = 'Removed file from workspace + IndexedDB.';
+  }
+
+  function normalizeHeader(h) {
+    return String(h == null ? '' : h).trim().toUpperCase().replace(/\s+/g, ' ');
+  }
+
+  function autoMap(headers) {
+    const map = {};
+    FIELD_DEFS.forEach(f => { map[f.key] = ''; });
+    const norm = headers.map(h => ({ raw: h, n: normalizeHeader(h) }));
+    FIELD_DEFS.forEach(field => {
+      for (const alias of field.aliases) {
+        const hit = norm.find(h => h.n === alias || h.n.replace(/[_\s]/g,'') === alias.replace(/[_\s]/g,''));
+        if (hit) { map[field.key] = hit.raw; return; }
+      }
+      // soft contains
+      for (const h of norm) {
+        if (field.key === 'start' && /START|DATE|TIME/.test(h.n) && !map.start) { map.start = h.raw; break; }
+        if (field.key === 'aparty' && /A.?PARTY|CALLING/.test(h.n) && !map.aparty) { map.aparty = h.raw; break; }
+        if (field.key === 'bparty' && /B.?PARTY|CALLED|OTHER/.test(h.n) && !map.bparty) { map.bparty = h.raw; break; }
+      }
+    });
+    return map;
+  }
+
+  function normMsisdn(v) {
+    if (v == null || v === '') return null;
+    let s = String(v).trim();
+    if (!s || s.toLowerCase() === 'nan') return null;
+    if (/[A-Za-z]/.test(s) && !/^\+?\d/.test(s)) return s;
+    let digits = s.replace(/\D/g, '');
+    if (!digits) return null;
+    if (digits.startsWith('880') && digits.length >= 13) return digits.slice(0, 13);
+    if (digits.startsWith('0') && digits.length === 11) return '880' + digits.slice(1);
+    if (digits.length === 10 && digits[0] === '1') return '880' + digits;
+    return digits;
+  }
+
+  function isSubscriber(msisdn) {
+    return !!msisdn && /^8801\d{9}$/.test(String(msisdn));
+  }
+
+  function classifyUsage(usage) {
+    const u = String(usage || '').toUpperCase().replace(/[\s\-_]/g, '');
+    if (u.includes('SMS')) {
+      if (u.includes('MT')) return 'SMSMT';
+      if (u.includes('MO')) return 'SMSMO';
+      return 'SMS';
+    }
+    if (u.includes('CALL') || u.includes('MOC') || u.includes('MTC') || u.includes('VOICE')) {
+      if (u.includes('MTC') || u.endsWith('MT') || u.includes('CALLMT')) return 'CALL_MT';
+      if (u.includes('MOC') || u.includes('CALLMO') || u.endsWith('MO')) return 'CALL_MO';
+      return 'CALL';
+    }
+    if (u.includes('GPRS') || u.includes('DATA')) return 'DATA';
+    return usage || 'OTHER';
+  }
+
+  function parseDate(v) {
+    if (v == null || v === '') return null;
+    if (v instanceof Date && !isNaN(v)) return v;
+    if (typeof v === 'number' && typeof XLSX !== 'undefined' && XLSX.SSF) {
+      // excel serial
+      try {
+        const d = XLSX.SSF.parse_date_code(v);
+        if (d) return new Date(d.y, d.m - 1, d.d, d.H, d.M, Math.floor(d.S || 0));
+      } catch (e) {}
+    }
+    const s = String(v).trim();
+    if (/^\d{14}$/.test(s)) {
+      return new Date(+s.slice(0,4), +s.slice(4,6)-1, +s.slice(6,8), +s.slice(8,10), +s.slice(10,12), +s.slice(12,14));
+    }
+    if (/^\d{8}$/.test(s)) {
+      return new Date(+s.slice(0,4), +s.slice(4,6)-1, +s.slice(6,8));
+    }
+    const d = new Date(s);
+    return isNaN(d.getTime()) ? null : d;
+  }
+
+  function parseCoord(v) {
+    if (v == null || v === '') return null;
+    if (typeof v === 'number' && isFinite(v)) return v;
+    const s = String(v).trim().replace(/,/g, '');
+    const n = parseFloat(s);
+    return isFinite(n) ? n : null;
+  }
+
+  function parseLatLngFromText(text) {
+    const s = String(text || '').trim();
+    if (!s) return null;
+    let m = s.match(/(-?\d{1,2}\.\d+)\s*[,;\s]\s*(-?\d{1,3}\.\d+)/);
+    if (m) {
+      const a = parseFloat(m[1]), b = parseFloat(m[2]);
+      if (Math.abs(a) <= 90 && Math.abs(b) <= 180) return { lat: a, lng: b };
+      if (Math.abs(b) <= 90 && Math.abs(a) <= 180) return { lat: b, lng: a };
+    }
+    m = s.match(/lat(?:itude)?\s*[:=]\s*(-?\d+\.?\d*)/i);
+    const m2 = s.match(/l(?:ng|on|ongitude)\s*[:=]\s*(-?\d+\.?\d*)/i);
+    if (m && m2) {
+      const lat = parseFloat(m[1]), lng = parseFloat(m2[1]);
+      if (isFinite(lat) && isFinite(lng)) return { lat, lng };
+    }
+    return null;
+  }
+
+  function fmtDur(sec) {
+    sec = Number(sec || 0);
+    if (sec <= 0) return '0s';
+    const h = Math.floor(sec / 3600);
+    const m = Math.floor((sec % 3600) / 60);
+    const s = sec % 60;
+    if (h) return h + 'h' + String(m).padStart(2,'0') + 'm' + String(s).padStart(2,'0') + 's';
+    if (m) return m + 'm' + String(s).padStart(2,'0') + 's';
+    return s + 's';
+  }
+
+  function fmtMsisdn(n) {
+    const d = String(n || '').replace(/\D/g,'');
+    if (d.startsWith('880') && d.length === 13) return `+${d.slice(0,3)} ${d.slice(3,5)} ${d.slice(5,9)} ${d.slice(9)}`;
+    return String(n || '');
+  }
+
+  function edgeLabel(events, duration) {
+    return duration > 0 ? `${events} | ${fmtDur(duration)}` : String(events);
+  }
+
+  function edgeWidthFor(value) {
+    return 2.4 + Math.min(8, Math.log1p(Number(value) || 0) * 1.45);
+  }
+
+  const RING_RADII = {0: 320, 1: 680, 2: 1040, 3: 1400};
+
+  function toLocalInput(d) {
+    const pad = n => String(n).padStart(2,'0');
+    return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  }
+
+  function svgDataUri(svg) {
+    return 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg);
+  }
+
+  function iconLocationPin(color) {
+    const c = color || '#D35400';
+    return svgDataUri(`<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">
+      <path fill="${c}" stroke="#1B2631" stroke-width="2"
+        d="M32 6c-9.4 0-17 7.6-17 17 0 12.8 17 35 17 35s17-22.2 17-35c0-9.4-7.6-17-17-17z"/>
+      <circle cx="32" cy="23" r="7" fill="#ffffff"/>
+    </svg>`);
+  }
+
+  function iconCellTower(color) {
+    const c = color || '#148F77';
+    return svgDataUri(`<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">
+      <g fill="none" stroke="${c}" stroke-width="3" stroke-linecap="round">
+        <path d="M16 20c10-10 22-10 32 0"/>
+        <path d="M21 27c7-7 15-7 22 0"/>
+        <path d="M26 34c4-4 8-4 12 0"/>
+      </g>
+      <rect x="29" y="30" width="6" height="24" rx="1.5" fill="${c}" stroke="#1B2631" stroke-width="1.5"/>
+      <path d="M18 56 L32 34 L46 56" fill="none" stroke="${c}" stroke-width="2.8"/>
+      <circle cx="32" cy="28" r="3.8" fill="#ffffff" stroke="${c}" stroke-width="2"/>
+      <line x1="12" y1="56" x2="52" y2="56" stroke="#1B2631" stroke-width="2"/>
+    </svg>`);
+  }
+
+  function iconHandset(color) {
+    const c = color || '#8E44AD';
+    return svgDataUri(`<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">
+      <rect x="18" y="8" width="28" height="48" rx="5" fill="${c}" stroke="#1B2631" stroke-width="2"/>
+      <rect x="22" y="14" width="20" height="30" rx="2" fill="#ffffff"/>
+      <circle cx="32" cy="50" r="2.6" fill="#ffffff"/>
+    </svg>`);
+  }
+
+  function iconPerson(color) {
+    const c = color || '#2471A3';
+    return svgDataUri(`<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">
+      <circle cx="32" cy="20" r="11" fill="${c}" stroke="#1B2631" stroke-width="2"/>
+      <path d="M12 56c2-14 12-20 20-20s18 6 20 20" fill="${c}" stroke="#1B2631" stroke-width="2"/>
+    </svg>`);
+  }
+
+  function iconSuspect(color) {
+    const c = color || '#C0392B';
+    return svgDataUri(`<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">
+      <circle cx="32" cy="20" r="11" fill="${c}" stroke="#1B2631" stroke-width="2"/>
+      <path d="M12 56c2-14 12-20 20-20s18 6 20 20" fill="${c}" stroke="#1B2631" stroke-width="2"/>
+      <circle cx="48" cy="14" r="10" fill="#F1C40F" stroke="#1B2631" stroke-width="2"/>
+      <text x="48" y="18" text-anchor="middle" font-size="14" font-weight="700" fill="#1B2631" font-family="Arial,sans-serif">!</text>
+    </svg>`);
+  }
+
+  function iconPhoneClassic(color) {
+    const c = color || '#1ABC9C';
+    return svgDataUri(`<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">
+      <path fill="${c}" stroke="#1B2631" stroke-width="2"
+        d="M20 10c2-2 6-2 8 0l4 4c2 2 1 5-1 7l-3 3c2 5 6 9 11 11l3-3c2-2 5-3 7-1l4 4c2 2 2 6 0 8l-3 3c-3 3-8 4-13 3-10-3-19-12-22-22-1-5 0-10 3-13l3-3z"/>
+    </svg>`);
+  }
+
+  function iconStar(color) {
+    const c = color || '#F39C12';
+    return svgDataUri(`<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">
+      <path fill="${c}" stroke="#1B2631" stroke-width="2"
+        d="M32 8l6.5 13.2 14.5 2.1-10.5 10.2 2.5 14.5L32 41.2 19 48l2.5-14.5L11 23.3l14.5-2.1z"/>
+    </svg>`);
+  }
+
+  function iconWarning(color) {
+    const c = color || '#E67E22';
+    return svgDataUri(`<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">
+      <path fill="${c}" stroke="#1B2631" stroke-width="2" d="M32 8 L58 54 H6 Z"/>
+      <rect x="29" y="24" width="6" height="16" rx="2" fill="#1B2631"/>
+      <circle cx="32" cy="46" r="3" fill="#1B2631"/>
+    </svg>`);
+  }
+
+  function iconVehicle(color) {
+    const c = color || '#5D6D7E';
+    return svgDataUri(`<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">
+      <path fill="${c}" stroke="#1B2631" stroke-width="2"
+        d="M10 36l6-14c1-3 4-5 7-5h18c3 0 6 2 7 5l6 14v10c0 2-1 3-3 3h-2c-2 0-3-1-3-3v-2H18v2c0 2-1 3-3 3h-2c-2 0-3-1-3-3V36z"/>
+      <circle cx="20" cy="44" r="5" fill="#ffffff" stroke="#1B2631" stroke-width="2"/>
+      <circle cx="44" cy="44" r="5" fill="#ffffff" stroke="#1B2631" stroke-width="2"/>
+      <rect x="18" y="24" width="28" height="8" rx="2" fill="#ffffff" opacity="0.85"/>
+    </svg>`);
+  }
+
+  function iconCompany(color) {
+    const c = color || '#566573';
+    return svgDataUri(`<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">
+      <rect x="10" y="18" width="28" height="38" fill="${c}" stroke="#1B2631" stroke-width="2"/>
+      <rect x="38" y="28" width="16" height="28" fill="${c}" stroke="#1B2631" stroke-width="2"/>
+      <rect x="15" y="24" width="6" height="6" fill="#ffffff"/>
+      <rect x="25" y="24" width="6" height="6" fill="#ffffff"/>
+      <rect x="15" y="34" width="6" height="6" fill="#ffffff"/>
+      <rect x="25" y="34" width="6" height="6" fill="#ffffff"/>
+      <rect x="15" y="44" width="6" height="6" fill="#ffffff"/>
+      <rect x="25" y="44" width="6" height="6" fill="#ffffff"/>
+      <rect x="42" y="34" width="8" height="6" fill="#ffffff"/>
+      <rect x="42" y="44" width="8" height="6" fill="#ffffff"/>
+    </svg>`);
+  }
+
+  function iconWitness(color) {
+    const c = color || '#1E8449';
+    return svgDataUri(`<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">
+      <circle cx="28" cy="20" r="10" fill="${c}" stroke="#1B2631" stroke-width="2"/>
+      <path d="M10 56c2-13 11-18 18-18s16 5 18 18" fill="${c}" stroke="#1B2631" stroke-width="2"/>
+      <circle cx="48" cy="42" r="11" fill="#27AE60" stroke="#1B2631" stroke-width="2"/>
+      <path d="M43 42l3.5 3.5 7-8" fill="none" stroke="#ffffff" stroke-width="2.8" stroke-linecap="round"/>
+    </svg>`);
+  }
+
+  function iconVictim(color) {
+    const c = color || '#922B21';
+    return svgDataUri(`<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">
+      <circle cx="28" cy="20" r="10" fill="${c}" stroke="#1B2631" stroke-width="2"/>
+      <path d="M10 56c2-13 11-18 18-18s16 5 18 18" fill="${c}" stroke="#1B2631" stroke-width="2"/>
+      <path d="M48 34c-3.5-3.5-9-2-9 2.5 0 6 9 11 9 11s9-5 9-11c0-4.5-5.5-6-9-2.5z" fill="#E74C3C" stroke="#1B2631" stroke-width="1.5"/>
+    </svg>`);
+  }
+
+  function iconInformant(color) {
+    const c = color || '#6C3483';
+    return svgDataUri(`<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">
+      <circle cx="26" cy="20" r="10" fill="${c}" stroke="#1B2631" stroke-width="2"/>
+      <path d="M8 56c2-13 11-18 18-18s16 5 18 18" fill="${c}" stroke="#1B2631" stroke-width="2"/>
+      <ellipse cx="46" cy="28" rx="12" ry="9" fill="#F4D03F" stroke="#1B2631" stroke-width="2"/>
+      <path d="M40 36l-2 6 7-4" fill="#F4D03F" stroke="#1B2631" stroke-width="1.5"/>
+    </svg>`);
+  }
+
+  function iconPolice(color) {
+    const c = color || '#1A5276';
+    return svgDataUri(`<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">
+      <path fill="${c}" stroke="#1B2631" stroke-width="2" d="M32 8l18 6v14c0 14-10 24-18 28-8-4-18-14-18-28V14z"/>
+      <circle cx="32" cy="30" r="8" fill="#F4D03F" stroke="#1B2631" stroke-width="2"/>
+      <path fill="#1B2631" d="M32 24l2.2 4.5 5 .7-3.6 3.5.9 5L32 35.2 27.5 37.7l.9-5-3.6-3.5 5-.7z"/>
+    </svg>`);
+  }
+
+  function iconLawyer(color) {
+    const c = color || '#4A235A';
+    return svgDataUri(`<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">
+      <rect x="28" y="10" width="8" height="10" fill="${c}" stroke="#1B2631" stroke-width="1.5"/>
+      <path fill="${c}" stroke="#1B2631" stroke-width="2" d="M10 28h18l4 8 4-8h18l-8 16H18z"/>
+      <rect x="18" y="46" width="28" height="8" rx="2" fill="${c}" stroke="#1B2631" stroke-width="2"/>
+      <line x1="32" y1="22" x2="32" y2="46" stroke="#1B2631" stroke-width="2"/>
+    </svg>`);
+  }
+
+  function iconFamily(color) {
+    const c = color || '#2874A6';
+    return svgDataUri(`<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">
+      <circle cx="22" cy="18" r="7" fill="${c}" stroke="#1B2631" stroke-width="1.8"/>
+      <path d="M10 48c1-9 7-13 12-13s11 4 12 13" fill="${c}" stroke="#1B2631" stroke-width="1.8"/>
+      <circle cx="42" cy="18" r="7" fill="#5DADE2" stroke="#1B2631" stroke-width="1.8"/>
+      <path d="M30 48c1-9 7-13 12-13s11 4 12 13" fill="#5DADE2" stroke="#1B2631" stroke-width="1.8"/>
+      <circle cx="32" cy="36" r="5" fill="#F5B041" stroke="#1B2631" stroke-width="1.5"/>
+      <path d="M24 56c1-6 5-9 8-9s7 3 8 9" fill="#F5B041" stroke="#1B2631" stroke-width="1.5"/>
+    </svg>`);
+  }
+
+  function iconHome(color) {
+    const c = color || '#CA6F1E';
+    return svgDataUri(`<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">
+      <path fill="${c}" stroke="#1B2631" stroke-width="2" d="M8 30 L32 10 L56 30 V54 H38 V40 H26 V54 H8 Z"/>
+      <rect x="28" y="34" width="8" height="10" fill="#ffffff"/>
+    </svg>`);
+  }
+
+  function iconBank(color) {
+    const c = color || '#1D8348';
+    return svgDataUri(`<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">
+      <path fill="${c}" stroke="#1B2631" stroke-width="2" d="M8 24 L32 10 L56 24 V28 H8 Z"/>
+      <rect x="12" y="30" width="8" height="18" fill="${c}" stroke="#1B2631" stroke-width="1.5"/>
+      <rect x="28" y="30" width="8" height="18" fill="${c}" stroke="#1B2631" stroke-width="1.5"/>
+      <rect x="44" y="30" width="8" height="18" fill="${c}" stroke="#1B2631" stroke-width="1.5"/>
+      <rect x="8" y="50" width="48" height="6" fill="${c}" stroke="#1B2631" stroke-width="2"/>
+    </svg>`);
+  }
+
+  function iconMoney(color) {
+    const c = color || '#196F3D';
+    return svgDataUri(`<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">
+      <rect x="8" y="16" width="48" height="32" rx="4" fill="${c}" stroke="#1B2631" stroke-width="2"/>
+      <circle cx="32" cy="32" r="10" fill="#F7DC6F" stroke="#1B2631" stroke-width="2"/>
+      <text x="32" y="37" text-anchor="middle" font-size="14" font-weight="700" fill="#1B2631" font-family="Arial,sans-serif">$</text>
+    </svg>`);
+  }
+
+  function iconSim(color) {
+    const c = color || '#7D3C98';
+    return svgDataUri(`<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">
+      <path fill="${c}" stroke="#1B2631" stroke-width="2" d="M18 8h20l8 8v40H18z"/>
+      <rect x="24" y="28" width="16" height="18" rx="2" fill="#F7DC6F" stroke="#1B2631" stroke-width="1.5"/>
+      <line x1="24" y1="34" x2="40" y2="34" stroke="#1B2631" stroke-width="1.2"/>
+      <line x1="24" y1="40" x2="40" y2="40" stroke="#1B2631" stroke-width="1.2"/>
+      <line x1="32" y1="28" x2="32" y2="46" stroke="#1B2631" stroke-width="1.2"/>
+    </svg>`);
+  }
+
+  function iconLaptop(color) {
+    const c = color || '#2E4053';
+    return svgDataUri(`<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">
+      <rect x="12" y="14" width="40" height="28" rx="2" fill="${c}" stroke="#1B2631" stroke-width="2"/>
+      <rect x="16" y="18" width="32" height="20" fill="#AED6F1"/>
+      <path fill="${c}" stroke="#1B2631" stroke-width="2" d="M6 44h52l-4 8H10z"/>
+    </svg>`);
+  }
+
+  function iconWifi(color) {
+    const c = color || '#148F77';
+    return svgDataUri(`<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">
+      <g fill="none" stroke="${c}" stroke-width="4" stroke-linecap="round">
+        <path d="M12 24c11-11 29-11 40 0"/>
+        <path d="M18 32c8-8 20-8 28 0"/>
+        <path d="M24 40c5-5 11-5 16 0"/>
+      </g>
+      <circle cx="32" cy="48" r="4" fill="${c}" stroke="#1B2631" stroke-width="1.5"/>
+    </svg>`);
+  }
+
+  function iconHotel(color) {
+    const c = color || '#B9770E';
+    return svgDataUri(`<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">
+      <rect x="10" y="14" width="44" height="42" fill="${c}" stroke="#1B2631" stroke-width="2"/>
+      <rect x="16" y="20" width="8" height="8" fill="#ffffff"/>
+      <rect x="28" y="20" width="8" height="8" fill="#ffffff"/>
+      <rect x="40" y="20" width="8" height="8" fill="#ffffff"/>
+      <rect x="16" y="32" width="8" height="8" fill="#ffffff"/>
+      <rect x="40" y="32" width="8" height="8" fill="#ffffff"/>
+      <rect x="26" y="40" width="12" height="16" fill="#F5CBA7" stroke="#1B2631" stroke-width="1.5"/>
+    </svg>`);
+  }
+
+  function iconHospital(color) {
+    const c = color || '#922B21';
+    return svgDataUri(`<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">
+      <rect x="12" y="12" width="40" height="44" fill="#F5B7B1" stroke="#1B2631" stroke-width="2"/>
+      <rect x="28" y="18" width="8" height="28" fill="${c}"/>
+      <rect x="18" y="28" width="28" height="8" fill="${c}"/>
+    </svg>`);
+  }
+
+  function iconSchool(color) {
+    const c = color || '#1F618D';
+    return svgDataUri(`<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">
+      <path fill="${c}" stroke="#1B2631" stroke-width="2" d="M8 28 L32 14 L56 28 L32 42 Z"/>
+      <path fill="none" stroke="${c}" stroke-width="3" d="M16 32v12c8 6 24 6 32 0V32"/>
+      <line x1="56" y1="28" x2="56" y2="48" stroke="#1B2631" stroke-width="2"/>
+      <circle cx="56" cy="50" r="3" fill="#F4D03F" stroke="#1B2631" stroke-width="1.5"/>
+    </svg>`);
+  }
+
+  function iconMosque(color) {
+    const c = color || '#0E6655';
+    return svgDataUri(`<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">
+      <path fill="${c}" stroke="#1B2631" stroke-width="2" d="M18 36c0-14 8-22 14-26 6 4 14 12 14 26z"/>
+      <rect x="14" y="36" width="36" height="18" fill="${c}" stroke="#1B2631" stroke-width="2"/>
+      <circle cx="32" cy="10" r="3" fill="#F4D03F" stroke="#1B2631" stroke-width="1.5"/>
+      <rect x="28" y="42" width="8" height="12" fill="#F5CBA7"/>
+    </svg>`);
+  }
+
+  function iconTarget(color) {
+    const c = color || '#C0392B';
+    return svgDataUri(`<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">
+      <circle cx="32" cy="32" r="22" fill="none" stroke="${c}" stroke-width="3"/>
+      <circle cx="32" cy="32" r="14" fill="none" stroke="${c}" stroke-width="3"/>
+      <circle cx="32" cy="32" r="6" fill="${c}" stroke="#1B2631" stroke-width="1.5"/>
+      <line x1="32" y1="6" x2="32" y2="16" stroke="#1B2631" stroke-width="2"/>
+      <line x1="32" y1="48" x2="32" y2="58" stroke="#1B2631" stroke-width="2"/>
+      <line x1="6" y1="32" x2="16" y2="32" stroke="#1B2631" stroke-width="2"/>
+      <line x1="48" y1="32" x2="58" y2="32" stroke="#1B2631" stroke-width="2"/>
+    </svg>`);
+  }
+
+  function iconUnknown(color) {
+    const c = color || '#7F8C8D';
+    return svgDataUri(`<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">
+      <circle cx="32" cy="32" r="24" fill="${c}" stroke="#1B2631" stroke-width="2"/>
+      <text x="32" y="42" text-anchor="middle" font-size="28" font-weight="700" fill="#ffffff" font-family="Arial,sans-serif">?</text>
+    </svg>`);
+  }
+
+  function iconBlocked(color) {
+    const c = color || '#922B21';
+    return svgDataUri(`<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">
+      <circle cx="32" cy="32" r="22" fill="none" stroke="${c}" stroke-width="5"/>
+      <line x1="16" y1="16" x2="48" y2="48" stroke="${c}" stroke-width="5" stroke-linecap="round"/>
+    </svg>`);
+  }
+
+  function iconWoman(color) {
+    const c = color || '#AD1457';
+    return svgDataUri(`<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">
+      <circle cx="32" cy="16" r="9" fill="${c}" stroke="#1B2631" stroke-width="2"/>
+      <path d="M18 56 L28 30 H36 L46 56 Z" fill="${c}" stroke="#1B2631" stroke-width="2"/>
+      <line x1="22" y1="42" x2="42" y2="42" stroke="#1B2631" stroke-width="2"/>
+    </svg>`);
+  }
+
+  function iconMan(color) {
+    const c = color || '#1A5276';
+    return svgDataUri(`<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">
+      <circle cx="32" cy="16" r="9" fill="${c}" stroke="#1B2631" stroke-width="2"/>
+      <path d="M20 56 V34c0-4 5-8 12-8s12 4 12 8v22" fill="${c}" stroke="#1B2631" stroke-width="2"/>
+      <line x1="20" y1="40" x2="12" y2="48" stroke="${c}" stroke-width="4" stroke-linecap="round"/>
+      <line x1="44" y1="40" x2="52" y2="48" stroke="${c}" stroke-width="4" stroke-linecap="round"/>
+    </svg>`);
+  }
+
+  function iconMotorcycle(color) {
+    const c = color || '#34495E';
+    return svgDataUri(`<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">
+      <circle cx="16" cy="42" r="10" fill="none" stroke="${c}" stroke-width="3"/>
+      <circle cx="48" cy="42" r="10" fill="none" stroke="${c}" stroke-width="3"/>
+      <path fill="none" stroke="${c}" stroke-width="3" stroke-linecap="round"
+        d="M16 42 L28 28 H40 L48 42 M28 28 L36 18 H46 M34 28 L28 36"/>
+    </svg>`);
+  }
+
+  function iconBoat(color) {
+    const c = color || '#1A5276';
+    return svgDataUri(`<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">
+      <path fill="${c}" stroke="#1B2631" stroke-width="2" d="M10 38 L54 38 L48 50 H16 Z"/>
+      <path fill="#AED6F1" stroke="#1B2631" stroke-width="1.5" d="M32 12 L32 38 L48 38 Z"/>
+      <line x1="8" y1="54" x2="56" y2="54" stroke="#5DADE2" stroke-width="3"/>
+    </svg>`);
+  }
+
+  function iconPlane(color) {
+    const c = color || '#2874A6';
+    return svgDataUri(`<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">
+      <path fill="${c}" stroke="#1B2631" stroke-width="2"
+        d="M8 36 L28 30 L28 18 L34 14 L34 28 L52 24 L56 28 L36 34 L36 46 L30 50 L30 36 L8 42 Z"/>
+    </svg>`);
+  }
+
+  function iconCamera(color) {
+    const c = color || '#5D6D7E';
+    return svgDataUri(`<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">
+      <rect x="8" y="20" width="48" height="32" rx="4" fill="${c}" stroke="#1B2631" stroke-width="2"/>
+      <path fill="${c}" stroke="#1B2631" stroke-width="2" d="M22 20l4-8h12l4 8"/>
+      <circle cx="32" cy="36" r="10" fill="#D5D8DC" stroke="#1B2631" stroke-width="2"/>
+      <circle cx="32" cy="36" r="5" fill="#2C3E50"/>
+    </svg>`);
+  }
+
+  function iconDocument(color) {
+    const c = color || '#5D6D7E';
+    return svgDataUri(`<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">
+      <path fill="#F4F6F7" stroke="#1B2631" stroke-width="2" d="M16 8h24l12 12v36H16z"/>
+      <path fill="${c}" stroke="#1B2631" stroke-width="1.5" d="M40 8v12h12"/>
+      <line x1="22" y1="30" x2="42" y2="30" stroke="${c}" stroke-width="2"/>
+      <line x1="22" y1="38" x2="42" y2="38" stroke="${c}" stroke-width="2"/>
+      <line x1="22" y1="46" x2="36" y2="46" stroke="${c}" stroke-width="2"/>
+    </svg>`);
+  }
+
+  function iconGroup(color) {
+    const c = color || '#1F618D';
+    return svgDataUri(`<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">
+      <circle cx="22" cy="22" r="8" fill="${c}" stroke="#1B2631" stroke-width="1.8"/>
+      <circle cx="42" cy="22" r="8" fill="#5DADE2" stroke="#1B2631" stroke-width="1.8"/>
+      <circle cx="32" cy="34" r="8" fill="#F5B041" stroke="#1B2631" stroke-width="1.8"/>
+      <path d="M8 54c1-8 7-12 14-12s12 3 14 10" fill="${c}" stroke="#1B2631" stroke-width="1.5"/>
+      <path d="M28 54c1-8 7-12 14-12s13 4 14 12" fill="#5DADE2" stroke="#1B2631" stroke-width="1.5"/>
+    </svg>`);
+  }
+
+  function iconClock(color) {
+    const c = color || '#B9770E';
+    return svgDataUri(`<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">
+      <circle cx="32" cy="32" r="22" fill="#FCF3CF" stroke="${c}" stroke-width="3"/>
+      <line x1="32" y1="32" x2="32" y2="18" stroke="#1B2631" stroke-width="3" stroke-linecap="round"/>
+      <line x1="32" y1="32" x2="44" y2="36" stroke="#1B2631" stroke-width="3" stroke-linecap="round"/>
+      <circle cx="32" cy="32" r="3" fill="#1B2631"/>
+    </svg>`);
+  }
+
+  function iconLock(color) {
+    const c = color || '#5D6D7E';
+    return svgDataUri(`<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">
+      <rect x="14" y="28" width="36" height="28" rx="4" fill="${c}" stroke="#1B2631" stroke-width="2"/>
+      <path fill="none" stroke="${c}" stroke-width="4" d="M20 28v-8c0-7 5-12 12-12s12 5 12 12v8"/>
+      <circle cx="32" cy="40" r="4" fill="#F7DC6F"/>
+      <rect x="30" y="42" width="4" height="8" fill="#F7DC6F"/>
+    </svg>`);
+  }
+
+  function iconShield(color) {
+    const c = color || '#1E8449';
+    return svgDataUri(`<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">
+      <path fill="${c}" stroke="#1B2631" stroke-width="2" d="M32 8l20 6v16c0 16-12 26-20 30-8-4-20-14-20-30V14z"/>
+      <path d="M22 32l7 7 14-14" fill="none" stroke="#ffffff" stroke-width="3.5" stroke-linecap="round"/>
+    </svg>`);
+  }
+
+  function iconFire(color) {
+    const c = color || '#E74C3C';
+    return svgDataUri(`<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">
+      <path fill="${c}" stroke="#1B2631" stroke-width="2"
+        d="M32 8c4 10-6 14-2 24 2-4 8-6 10-14 8 8 12 16 12 24 0 12-9 20-20 20S12 54 12 42c0-10 8-20 20-34z"/>
+      <path fill="#F5B041" d="M32 34c2 4-1 7 1 12 1-2 4-3 5-7 3 4 5 7 5 11 0 6-4 10-10 10s-10-4-10-10c0-5 4-10 9-16z"/>
+    </svg>`);
+  }
+
+  function iconFlag(color) {
+    const c = color || '#C0392B';
+    return svgDataUri(`<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">
+      <line x1="14" y1="8" x2="14" y2="56" stroke="#1B2631" stroke-width="3"/>
+      <path fill="${c}" stroke="#1B2631" stroke-width="2" d="M16 10h30l-8 12 8 12H16z"/>
+    </svg>`);
+  }
+
+  function iconVerified(color) {
+    const c = color || '#1E8449';
+    return svgDataUri(`<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">
+      <circle cx="32" cy="32" r="24" fill="${c}" stroke="#1B2631" stroke-width="2"/>
+      <path d="M18 33l9 9 19-20" fill="none" stroke="#ffffff" stroke-width="5" stroke-linecap="round"/>
+    </svg>`);
+  }
+
+  function iconShop(color) {
+    const c = color || '#B9770E';
+    return svgDataUri(`<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">
+      <path fill="${c}" stroke="#1B2631" stroke-width="2" d="M8 24l4-12h40l4 12"/>
+      <rect x="10" y="24" width="44" height="30" fill="#F5CBA7" stroke="#1B2631" stroke-width="2"/>
+      <rect x="26" y="36" width="12" height="18" fill="#FFFFFF" stroke="#1B2631" stroke-width="1.5"/>
+      <path fill="${c}" d="M8 24h10c0 4-4 7-5 7s-5-3-5-7zm10 0h10c0 4-4 7-5 7s-5-3-5-7zm10 0h10c0 4-4 7-5 7s-5-3-5-7zm10 0h10c0 4-4 7-5 7s-5-3-5-7z"/>
+    </svg>`);
+  }
+
+  function iconFactory(color) {
+    const c = color || '#566573';
+    return svgDataUri(`<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">
+      <path fill="${c}" stroke="#1B2631" stroke-width="2" d="M8 54V30l14 10V30l14 10V22h20v32z"/>
+      <rect x="40" y="10" width="8" height="12" fill="${c}" stroke="#1B2631" stroke-width="1.5"/>
+      <rect x="18" y="40" width="8" height="8" fill="#F7DC6F"/>
+      <rect x="30" y="40" width="8" height="8" fill="#F7DC6F"/>
+    </svg>`);
+  }
+
+  function iconKey(color) {
+    const c = color || '#B7950B';
+    return svgDataUri(`<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">
+      <circle cx="22" cy="32" r="12" fill="${c}" stroke="#1B2631" stroke-width="2"/>
+      <circle cx="22" cy="32" r="4" fill="#ffffff"/>
+      <path fill="${c}" stroke="#1B2631" stroke-width="2" d="M32 30h24v8H46v6h-8v-6h-6z"/>
+    </svg>`);
+  }
+
+  function iconMessage(color) {
+    const c = color || '#1ABC9C';
+    return svgDataUri(`<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">
+      <path fill="${c}" stroke="#1B2631" stroke-width="2" d="M8 14h48v32H24l-10 10v-10H8z"/>
+      <line x1="18" y1="26" x2="46" y2="26" stroke="#ffffff" stroke-width="2.5"/>
+      <line x1="18" y1="34" x2="38" y2="34" stroke="#ffffff" stroke-width="2.5"/>
+    </svg>`);
+  }
+
+  const NODE_ICON_CATALOG = [
+    { key: 'default', label: 'Default (by node type)', color: null, size: 30, make: null },
+    { key: 'suspect', label: 'Suspect', color: '#C0392B', size: 32, make: () => iconSuspect('#C0392B') },
+    { key: 'target', label: 'Priority target', color: '#C0392B', size: 32, make: () => iconTarget('#C0392B') },
+    { key: 'person', label: 'Person', color: '#2471A3', size: 30, make: () => iconPerson('#2471A3') },
+    { key: 'man', label: 'Man', color: '#1A5276', size: 30, make: () => iconMan('#1A5276') },
+    { key: 'woman', label: 'Woman', color: '#AD1457', size: 30, make: () => iconWoman('#AD1457') },
+    { key: 'witness', label: 'Witness', color: '#1E8449', size: 32, make: () => iconWitness('#1E8449') },
+    { key: 'victim', label: 'Victim', color: '#922B21', size: 32, make: () => iconVictim('#922B21') },
+    { key: 'informant', label: 'Informant', color: '#6C3483', size: 32, make: () => iconInformant('#6C3483') },
+    { key: 'police', label: 'Police / officer', color: '#1A5276', size: 32, make: () => iconPolice('#1A5276') },
+    { key: 'lawyer', label: 'Lawyer', color: '#4A235A', size: 30, make: () => iconLawyer('#4A235A') },
+    { key: 'family', label: 'Family', color: '#2874A6', size: 32, make: () => iconFamily('#2874A6') },
+    { key: 'group', label: 'Group / network', color: '#1F618D', size: 32, make: () => iconGroup('#1F618D') },
+    { key: 'phone', label: 'Phone', color: '#1ABC9C', size: 28, make: () => iconPhoneClassic('#1ABC9C') },
+    { key: 'handset', label: 'Handset / IMEI', color: '#8E44AD', size: 28, make: () => iconHandset('#8E44AD') },
+    { key: 'sim', label: 'SIM card', color: '#7D3C98', size: 28, make: () => iconSim('#7D3C98') },
+    { key: 'message', label: 'SMS / message', color: '#1ABC9C', size: 28, make: () => iconMessage('#1ABC9C') },
+    { key: 'tower', label: 'Tower / LAC-CI', color: '#148F77', size: 30, make: () => iconCellTower('#148F77') },
+    { key: 'wifi', label: 'Wi‑Fi / internet', color: '#148F77', size: 30, make: () => iconWifi('#148F77') },
+    { key: 'laptop', label: 'Computer / laptop', color: '#2E4053', size: 30, make: () => iconLaptop('#2E4053') },
+    { key: 'pin', label: 'Location pin', color: '#D35400', size: 30, make: () => iconLocationPin('#D35400') },
+    { key: 'home', label: 'Home / residence', color: '#CA6F1E', size: 30, make: () => iconHome('#CA6F1E') },
+    { key: 'company', label: 'Company / office', color: '#566573', size: 30, make: () => iconCompany('#566573') },
+    { key: 'factory', label: 'Factory', color: '#566573', size: 30, make: () => iconFactory('#566573') },
+    { key: 'shop', label: 'Shop / market', color: '#B9770E', size: 30, make: () => iconShop('#B9770E') },
+    { key: 'hotel', label: 'Hotel', color: '#B9770E', size: 30, make: () => iconHotel('#B9770E') },
+    { key: 'hospital', label: 'Hospital', color: '#922B21', size: 30, make: () => iconHospital('#922B21') },
+    { key: 'school', label: 'School', color: '#1F618D', size: 30, make: () => iconSchool('#1F618D') },
+    { key: 'mosque', label: 'Mosque / place of worship', color: '#0E6655', size: 30, make: () => iconMosque('#0E6655') },
+    { key: 'bank', label: 'Bank', color: '#1D8348', size: 30, make: () => iconBank('#1D8348') },
+    { key: 'money', label: 'Money / finance', color: '#196F3D', size: 30, make: () => iconMoney('#196F3D') },
+    { key: 'vehicle', label: 'Car / vehicle', color: '#5D6D7E', size: 30, make: () => iconVehicle('#5D6D7E') },
+    { key: 'motorcycle', label: 'Motorcycle', color: '#34495E', size: 30, make: () => iconMotorcycle('#34495E') },
+    { key: 'boat', label: 'Boat', color: '#1A5276', size: 30, make: () => iconBoat('#1A5276') },
+    { key: 'plane', label: 'Plane / airport', color: '#2874A6', size: 30, make: () => iconPlane('#2874A6') },
+    { key: 'camera', label: 'Camera / CCTV', color: '#5D6D7E', size: 30, make: () => iconCamera('#5D6D7E') },
+    { key: 'document', label: 'Document / file', color: '#5D6D7E', size: 30, make: () => iconDocument('#5D6D7E') },
+    { key: 'key', label: 'Key / access', color: '#B7950B', size: 30, make: () => iconKey('#B7950B') },
+    { key: 'lock', label: 'Lock / secure', color: '#5D6D7E', size: 30, make: () => iconLock('#5D6D7E') },
+    { key: 'shield', label: 'Shield / protected', color: '#1E8449', size: 30, make: () => iconShield('#1E8449') },
+    { key: 'star', label: 'Important / VIP', color: '#F39C12', size: 30, make: () => iconStar('#F39C12') },
+    { key: 'flag', label: 'Flagged', color: '#C0392B', size: 30, make: () => iconFlag('#C0392B') },
+    { key: 'fire', label: 'Urgent / hot', color: '#E74C3C', size: 30, make: () => iconFire('#E74C3C') },
+    { key: 'warning', label: 'Warning', color: '#E67E22', size: 30, make: () => iconWarning('#E67E22') },
+    { key: 'blocked', label: 'Blocked / banned', color: '#922B21', size: 30, make: () => iconBlocked('#922B21') },
+    { key: 'verified', label: 'Verified', color: '#1E8449', size: 30, make: () => iconVerified('#1E8449') },
+    { key: 'unknown', label: 'Unknown', color: '#7F8C8D', size: 30, make: () => iconUnknown('#7F8C8D') },
+    { key: 'clock', label: 'Time-sensitive', color: '#B9770E', size: 30, make: () => iconClock('#B9770E') },
+  ];
+
+  function populateNodeIconSelect() {
+    const sel = $('nodeIcon');
+    if (!sel) return;
+    const cur = sel.value || 'default';
+    sel.innerHTML = NODE_ICON_CATALOG.map(i =>
+      `<option value="${i.key}">${i.label}</option>`
+    ).join('');
+    if (NODE_ICON_CATALOG.some(i => i.key === cur)) sel.value = cur;
+    else sel.value = 'default';
+  }
+
+  function applyAnnotationIcon(n, iconKey) {
+    const key = String(iconKey || 'default');
+    const item = NODE_ICON_CATALOG.find(i => i.key === key);
+    if (!item || !item.make) return;
+    const image = item.make();
+    const color = item.color || '#566573';
+    n.shape = 'image';
+    n.image = image;
+    n.brokenImage = image;
+    n.size = item.size || 30;
+    n.borderWidth = 0;
+    n.color = {
+      background: color,
+      border: '#1B2631',
+      highlight: { background: color, border: '#000' },
+      hover: { background: color, border: '#000' }
+    };
+    n.font = Object.assign({}, n.font || {}, {
+      size: 11,
+      face: 'Segoe UI, Tahoma, sans-serif',
+      color: '#1B2631',
+      strokeWidth: 3,
+      strokeColor: '#F7F4EF',
+      vadjust: 4
+    });
+  }
+
+  function applyNodeVisual(node) {
+    const n = Object.assign({}, node);
+    const baseLabel = n.baseLabel != null ? n.baseLabel : n.label;
+    n.baseLabel = baseLabel;
+    const baseTitle = n.baseTitle != null ? n.baseTitle : (n.title || '');
+    n.baseTitle = baseTitle;
+
+    if (n.kind === 'loc_addr') {
+      n.shape = 'image';
+      n.image = iconLocationPin('#D35400');
+      n.brokenImage = n.image;
+      n.size = 30;
+      n.borderWidth = 0;
+      n.font = Object.assign({}, n.font || {}, {
+        size: 11,
+        face: 'Segoe UI, Tahoma, sans-serif',
+        color: '#1B2631',
+        strokeWidth: 3,
+        strokeColor: '#F7F4EF',
+        vadjust: 4
+      });
+    } else if (n.kind === 'loc_cell') {
+      n.shape = 'image';
+      n.image = iconCellTower('#148F77');
+      n.brokenImage = n.image;
+      n.size = 30;
+      n.borderWidth = 0;
+      n.font = Object.assign({}, n.font || {}, {
+        size: 11,
+        face: 'Segoe UI, Tahoma, sans-serif',
+        color: '#1B2631',
+        strokeWidth: 3,
+        strokeColor: '#F7F4EF',
+        vadjust: 4
+      });
+    } else if (n.kind === 'imei') {
+      n.shape = 'image';
+      n.image = iconHandset('#8E44AD');
+      n.brokenImage = n.image;
+      n.size = 28;
+      n.borderWidth = 0;
+      n.font = Object.assign({}, n.font || {}, {
+        size: 10,
+        face: 'Segoe UI, Tahoma, sans-serif',
+        color: '#1B2631',
+        strokeWidth: 3,
+        strokeColor: '#F7F4EF',
+        vadjust: 4
+      });
+    } else {
+      n.shape = (n.shape && n.shape !== 'image') ? n.shape : 'dot';
+      if (n.shape === 'dot') n.borderWidth = n.borderWidth == null ? 2 : n.borderWidth;
+    }
+
+    const ann = (state.annotations && state.annotations[n.id]) || {};
+    const nick = ann.nickname ? String(ann.nickname).trim() : '';
+    const comment = ann.comment ? String(ann.comment).trim() : '';
+    const cleanBase = String(baseLabel || '').replace(/^[📍📡📱]\s*/, '');
+    n.label = nick || cleanBase;
+
+    let title = baseTitle || cleanBase;
+    if (nick) title += (title ? '\n' : '') + 'Nickname: ' + nick;
+    if (comment) title += (title ? '\n' : '') + 'Note: ' + comment;
+    if (nick || comment) title += (title ? '\n' : '') + 'ID: ' + n.id;
+    n.title = title;
+
+    if (ann.icon && ann.icon !== 'default') {
+      applyAnnotationIcon(n, ann.icon);
+    }
+    return n;
+  }
+
+  function resetNodeEditPanel() {
+    state.activeNodeId = null;
+    const fields = $('nodeEditFields');
+    const hint = $('nodeEditHint');
+    if (fields) fields.style.display = 'none';
+    if (hint) hint.style.display = 'block';
+    if ($('nodeNickname')) $('nodeNickname').value = '';
+    if ($('nodeComment')) $('nodeComment').value = '';
+    if ($('nodeIcon')) $('nodeIcon').value = 'default';
+    if ($('nodeEditId')) $('nodeEditId').textContent = '';
+  }
+
+  function fillNodeEditPanel(id) {
+    if (id == null || id === '') {
+      resetNodeEditPanel();
+      return;
+    }
+    state.activeNodeId = id;
+    const ann = (state.annotations && state.annotations[id]) || {};
+    const fields = $('nodeEditFields');
+    const hint = $('nodeEditHint');
+    if (hint) hint.style.display = 'none';
+    if (fields) fields.style.display = 'block';
+    $('nodeEditId').textContent = String(id);
+    $('nodeNickname').value = ann.nickname || '';
+    $('nodeComment').value = ann.comment || '';
+    $('nodeIcon').value = ann.icon || 'default';
+  }
+
+  async function saveActiveNodeAnnotation() {
+    const id = state.activeNodeId;
+    if (id == null || id === '') {
+      alert('Select a node on the chart first.');
+      return;
+    }
+    const nickname = String($('nodeNickname').value || '').trim();
+    const comment = String($('nodeComment').value || '').trim();
+    const icon = String($('nodeIcon').value || 'default');
+    if (!state.annotations) state.annotations = {};
+    if (!nickname && !comment && icon === 'default') {
+      delete state.annotations[id];
+    } else {
+      state.annotations[id] = { nickname, comment, icon };
+    }
+    const saved = await saveDatasetsToStorage();
+    if (state.rawNodes && state.nodesDS) {
+      applyFilters(true);
+      if (state.network) {
+        try { state.network.selectNodes([id]); } catch (e) {}
+      }
+      fillNodeEditPanel(id);
+      const node = state.nodesDS.get(id);
+      if (node) {
+        const edges = state.network ? state.network.getConnectedEdges(id) : [];
+        let total = 0, dur = 0;
+        edges.forEach(eid => { const e = state.edgesDS.get(eid); total += Number(e.value || 0); dur += Number(e.duration || 0); });
+        const nickLine = nickname ? ('Nickname: ' + nickname + '\n') : '';
+        const noteLine = comment ? ('Note: ' + comment + '\n') : '';
+        $('details').textContent =
+          `${node.group}\n${nickLine}${noteLine}${node.label}\nID: ${id}\nLinks: ${edges.length}\nEvents: ${total}\nDuration: ${fmtDur(dur)}\n\nIdentity ${saved.ok ? 'saved' : 'save failed'}.`;
+      }
+    } else {
+      $('details').textContent = saved.ok
+        ? 'Node identity saved. Build the chart to see it on the graph.'
+        : 'Failed to save node identity.';
+    }
+  }
+
+  async function clearActiveNodeAnnotation() {
+    const id = state.activeNodeId;
+    if (id == null || id === '') {
+      alert('Select a node on the chart first.');
+      return;
+    }
+    if (state.annotations) delete state.annotations[id];
+    $('nodeNickname').value = '';
+    $('nodeComment').value = '';
+    $('nodeIcon').value = 'default';
+    await saveDatasetsToStorage();
+    if (state.rawNodes && state.nodesDS) {
+      applyFilters(true);
+      if (state.network) {
+        try { state.network.selectNodes([id]); } catch (e) {}
+      }
+      fillNodeEditPanel(id);
+    }
+    $('details').textContent = 'Cleared nickname / comment / icon for node ' + id;
+  }
+
+  // -------- file load ----------
+  if (typeof XLSX === 'undefined') {
+    showError('SheetJS (xlsx) failed to load.\nNeed: output/vendor/xlsx.full.min.js');
+    return;
+  }
+  if (typeof vis === 'undefined') {
+    showError('vis-network failed to load.\nNeed: output/vendor/vis-network.min.js');
+    return;
+  }
+
+  const drop = $('drop');
+  const fileInput = $('fileInput');
+  drop.onclick = () => fileInput.click();
+  drop.ondragover = e => { e.preventDefault(); drop.classList.add('drag'); };
+  drop.ondragleave = () => drop.classList.remove('drag');
+  drop.ondrop = e => {
+    e.preventDefault();
+    drop.classList.remove('drag');
+    handleFiles(e.dataTransfer.files);
+  };
+  fileInput.onchange = () => handleFiles(fileInput.files);
+
+  async function handleFiles(fileList) {
+    clearError();
+    const files = Array.from(fileList || []);
+    for (const file of files) {
+      try {
+        const buf = await file.arrayBuffer();
+        const wb = XLSX.read(buf, { type: 'array', cellDates: true });
+        const sheets = {};
+        wb.SheetNames.forEach(name => {
+          const rows = XLSX.utils.sheet_to_json(wb.Sheets[name], { defval: '', raw: false });
+          const headers = rows.length ? Object.keys(rows[0]) : (XLSX.utils.sheet_to_json(wb.Sheets[name], { header: 1 })[0] || []).map(String);
+          sheets[name] = { headers: headers.map(String), rows };
+        });
+        const id = 'f_' + Date.now() + '_' + Math.random().toString(36).slice(2,7);
+        const firstSheet = wb.SheetNames[0];
+        const staging = {
+          id,
+          name: file.name,
+          sheets,
+          sheetNames: wb.SheetNames,
+          sheet: firstSheet,
+          mapping: autoMap(sheets[firstSheet].headers),
+          targetOverride: guessTarget(file.name, firstSheet),
+          status: 'mapping',
+        };
+        state.staging.push(staging);
+        state.activeStagingId = id;
+      } catch (err) {
+        showError('Failed to read ' + file.name + '\n' + err);
+      }
+    }
+    renderFileList();
+    renderMapper();
+  }
+
+  function guessTarget(fileName, sheetName) {
+    const fromSheet = String(sheetName).match(/880\d{10}|\d{10,13}/);
+    if (fromSheet) return normMsisdn(fromSheet[0]) || '';
+    const fromFile = String(fileName).match(/880\d{10}|\d{10,13}/);
+    return fromFile ? (normMsisdn(fromFile[0]) || '') : '';
+  }
+
+  function renderFileList() {
+    const all = [
+      ...state.datasets.map(d => ({
+        id: d.id, name: d.name, status: 'ready', removable: true,
+        meta: `${d.records.length} rows · target ${d.target || '-'}${d.savedAt ? ' · saved' : ''}`
+      })),
+      ...state.staging.map(s => ({
+        id: s.id, name: s.name, status: 'mapping', removable: true,
+        meta: 'needs column mapping'
+      })),
+    ];
+    $('fileList').innerHTML = all.map(f => `
+      <div class="fileitem ${f.id === state.activeStagingId ? 'active' : ''}" data-id="${f.id}">
+        <div class="name">${esc(f.name)}</div>
+        <div class="meta"><span class="badge ${f.status==='ready'?'ok':'wait'}">${f.status}</span> ${esc(f.meta)}</div>
+        <div class="actions">
+          ${f.status==='mapping' ? '<button type="button" data-act="map">Map</button>' : '<button type="button" data-act="info">Info</button>'}
+          <button type="button" class="danger" data-act="remove">Remove</button>
+        </div>
+      </div>`).join('') || '<div class="hint">No files yet — upload or Load storage</div>';
+
+    $('fileList').querySelectorAll('.fileitem').forEach(el => {
+      const id = el.getAttribute('data-id');
+      el.querySelectorAll('button').forEach(btn => {
+        btn.onclick = (ev) => {
+          ev.stopPropagation();
+          const act = btn.getAttribute('data-act');
+          if (act === 'remove') {
+            if (!confirm('Remove this file from workspace and IndexedDB?')) return;
+            removeDataset(id);
+            return;
+          }
+          if (act === 'map') {
+            const st = state.staging.find(x => x.id === id);
+            if (st) {
+              state.activeStagingId = id;
+              renderFileList();
+              renderMapper();
+            }
+            return;
+          }
+          if (act === 'info') {
+            const d = state.datasets.find(x => x.id === id);
+            if (d) {
+              $('details').textContent =
+                `File: ${d.name}\nSheet: ${d.sheet}\nTarget: ${d.target}\nRows: ${d.records.length}\n` +
+                `Raw columns saved: ${(d.headers && d.headers.length) ? d.headers.length : 0}\n` +
+                `Saved: ${d.savedAt || '-'}\nMapping: ${JSON.stringify(d.mapping)}`;
+            }
+          }
+        };
+      });
+      el.onclick = () => {
+        const st = state.staging.find(x => x.id === id);
+        if (st) {
+          state.activeStagingId = id;
+          renderFileList();
+          renderMapper();
+        }
+      };
+    });
+    $('wsFiles').textContent = state.datasets.length;
+    $('wsRecs').textContent = state.datasets.reduce((a,d)=>a+d.records.length,0).toLocaleString();
+    const targets = new Set(state.datasets.map(d => d.target).filter(Boolean));
+    $('wsTargets').textContent = targets.size;
+    updateStorageStats();
+  }
+
+  function currentStaging() {
+    return state.staging.find(s => s.id === state.activeStagingId) || state.staging[0] || null;
+  }
+
+  function renderMapper() {
+    const st = currentStaging();
+    if (!st) {
+      $('mapBox').style.display = 'none';
+      return;
+    }
+    $('mapBox').style.display = 'block';
+    $('mapFileName').textContent = st.name;
+    $('targetOverride').value = st.targetOverride || '';
+    const sel = $('sheetSelect');
+    sel.innerHTML = st.sheetNames.map(n => `<option value="${esc(n)}" ${n===st.sheet?'selected':''}>${esc(n)} (${st.sheets[n].rows.length} rows)</option>`).join('');
+    sel.onchange = () => {
+      st.sheet = sel.value;
+      st.mapping = autoMap(st.sheets[st.sheet].headers);
+      if (!st.targetOverride) st.targetOverride = guessTarget(st.name, st.sheet);
+      renderMapper();
+    };
+    const headers = st.sheets[st.sheet].headers;
+    $('mapGrid').innerHTML = FIELD_DEFS.map(f => {
+      const val = st.mapping[f.key] || '';
+      const options = ['<option value="">— skip —</option>'].concat(
+        headers.map(h => `<option value="${escAttr(h)}" ${h===val?'selected':''}>${esc(h)}</option>`)
+      ).join('');
+      return `<div class="maprow"><label>${f.label}</label><select data-key="${f.key}">${options}</select></div>`;
+    }).join('');
+    $('mapGrid').querySelectorAll('select').forEach(selEl => {
+      selEl.onchange = () => { st.mapping[selEl.getAttribute('data-key')] = selEl.value; renderPreview(st); };
+    });
+    $('targetOverride').oninput = () => { st.targetOverride = $('targetOverride').value.trim(); };
+    renderPreview(st);
+  }
+
+  function renderPreview(st) {
+    const rows = st.sheets[st.sheet].rows.slice(0, 5);
+    const headers = st.sheets[st.sheet].headers;
+    if (!rows.length) { $('preview').innerHTML = '<div class="hint">No rows</div>'; return; }
+    $('preview').innerHTML = `<table><thead><tr>${headers.map(h=>`<th>${esc(h)}</th>`).join('')}</tr></thead>
+      <tbody>${rows.map(r=>`<tr>${headers.map(h=>`<td>${esc(r[h])}</td>`).join('')}</tr>`).join('')}</tbody></table>`;
+  }
+
+  $('btnAutoMap').onclick = () => {
+    const st = currentStaging();
+    if (!st) return;
+    st.mapping = autoMap(st.sheets[st.sheet].headers);
+    renderMapper();
+  };
+
+  $('btnAddMapped').onclick = async () => {
+    const st = currentStaging();
+    if (!st) return;
+    // sync selects
+    $('mapGrid').querySelectorAll('select').forEach(selEl => {
+      st.mapping[selEl.getAttribute('data-key')] = selEl.value;
+    });
+    st.targetOverride = $('targetOverride').value.trim();
+    const m = st.mapping;
+    if (!m.start || !m.aparty || !m.bparty) {
+      showError('Mapping incomplete.\nRequired: start, aparty, bparty');
+      return;
+    }
+    clearError();
+    const sheetHeaders = (st.sheets[st.sheet].headers || []).map(String);
+    const rows = st.sheets[st.sheet].rows;
+    const records = [];
+    const rawMatrix = [];
+    const apartyCount = {};
+    rows.forEach(row => {
+      const aparty = normMsisdn(row[m.aparty]);
+      const bparty = normMsisdn(row[m.bparty]);
+      if (!aparty) return;
+      const start = parseDate(row[m.start]);
+      let duration = 0;
+      if (m.duration) {
+        const d = parseFloat(String(row[m.duration]).replace(/,/g,''));
+        duration = isNaN(d) ? 0 : Math.max(0, Math.floor(d));
+      }
+      const usage = m.usage ? String(row[m.usage] || '') : '';
+      const rec = {
+        start,
+        aparty,
+        bparty: bparty || '',
+        duration,
+        usage,
+        usage_class: classifyUsage(usage),
+        provider: m.provider ? String(row[m.provider] || '') : '',
+        network: m.network ? String(row[m.network] || '') : '',
+        imei: m.imei ? String(row[m.imei] || '').split('.')[0] : '',
+        imsi: m.imsi ? String(row[m.imsi] || '').split('.')[0] : '',
+        lac: m.lac ? String(row[m.lac] || '') : '',
+        ci: m.ci ? String(row[m.ci] || '') : '',
+        address: m.address ? String(row[m.address] || '').trim() : '',
+        lat: m.lat ? parseCoord(row[m.lat]) : null,
+        lng: m.lng ? parseCoord(row[m.lng]) : null,
+        source: st.name,
+        sheet: st.sheet,
+      };
+      // If lat/lng missing, try to parse from address text
+      if ((rec.lat == null || rec.lng == null) && rec.address) {
+        const parsed = parseLatLngFromText(rec.address);
+        if (parsed) { rec.lat = parsed.lat; rec.lng = parsed.lng; }
+      }
+      records.push(rec);
+      rawMatrix.push(sheetHeaders.map(h => {
+        const v = row[h];
+        return v == null ? '' : String(v);
+      }));
+      apartyCount[aparty] = (apartyCount[aparty] || 0) + 1;
+    });
+    let target = normMsisdn(st.targetOverride);
+    if (!target) {
+      target = Object.keys(apartyCount).sort((a,b)=>apartyCount[b]-apartyCount[a])[0] || '';
+    }
+    records.forEach(r => { r.target = target; });
+    state.datasets.push({
+      id: st.id,
+      name: st.name,
+      sheet: st.sheet,
+      mapping: Object.assign({}, m),
+      target,
+      savedAt: new Date().toISOString(),
+      records,
+      headers: sheetHeaders,
+      rawMatrix,
+    });
+    state.staging = state.staging.filter(x => x.id !== st.id);
+    state.activeStagingId = state.staging[0] ? state.staging[0].id : null;
+    const saved = await saveDatasetsToStorage();
+    renderFileList();
+    renderMapper();
+    $('details').textContent =
+      `Added ${st.name}\nRows: ${records.length}\nSubject/target: ${target || '(none)'}\n` +
+      (saved.ok ? `Saved to IndexedDB (${storageSizeLabel(saved.size)})\n` : 'WARNING: IndexedDB save failed\n') +
+      `\nMap more files or click Build / Refresh chart.`;
+  };
+
+  $('btnClearWs').onclick = async () => {
+    if (!confirm('Clean storage?\nThis removes ALL mapped files from workspace AND IndexedDB.')) return;
+    await clearStorageAndWorkspace();
+  };
+  $('btnLoadStorage').onclick = async () => {
+    clearError();
+    const ok = await loadDatasetsFromStorage(false);
+    if (!ok) $('details').textContent = 'No saved data in IndexedDB.';
+  };
+  $('btnSaveStorage').onclick = async () => {
+    clearError();
+    const saved = await saveDatasetsToStorage();
+    if (saved.ok) {
+      $('details').textContent = `Saved ${state.datasets.length} file(s) to IndexedDB (${storageSizeLabel(saved.size)}).`;
+    }
+  };
+
+  // -------- analyze / build graph ----------
+  function buildData() {
+    if (!state.datasets.length) throw new Error('No mapped files in workspace.');
+    state._addrDisplay = {};
+    const records = [];
+    state.datasets.forEach(d => records.push(...d.records));
+    const targets = [...new Set(state.datasets.map(d => d.target).filter(Boolean))];
+    if (!targets.length) throw new Error('No subject/target numbers found. Set target override while mapping.');
+
+    const contacts = {};
+    const eventsByPair = {};
+    const usageCounter = {};
+    const imeiByTarget = {};
+    const cellByTarget = {};
+    const addrByTarget = {};
+    const entityEvents = {}; // target|ENTITY -> logs for modal
+    targets.forEach(t => {
+      contacts[t] = {};
+      imeiByTarget[t] = {};
+      cellByTarget[t] = {};
+      addrByTarget[t] = {};
+    });
+
+    function pushEntityEvent(target, entityId, rec) {
+      if (!rec.start) return;
+      const key = [target, entityId].sort().join('|');
+      if (!entityEvents[key]) entityEvents[key] = [];
+      const d = rec.start;
+      const pad = n => String(n).padStart(2,'0');
+      entityEvents[key].push({
+        t: Math.floor(d.getTime()/1000),
+        d: rec.duration || 0,
+        dt: `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`,
+        usage: rec.usage || '',
+        usage_class: rec.usage_class || '',
+        network: rec.network || '',
+        provider: rec.provider || '',
+        imei: rec.imei || '',
+        imsi: rec.imsi || '',
+        lac: rec.lac || '',
+        ci: rec.ci || '',
+        address: rec.address || '',
+        aparty: rec.aparty || '',
+        bparty: rec.bparty || '',
+        target: rec.target || '',
+        source: rec.source || '',
+      });
+    }
+
+    records.forEach(rec => {
+      const t = rec.target;
+      if (!t || !targets.includes(t)) return;
+      usageCounter[rec.usage_class || 'OTHER'] = (usageCounter[rec.usage_class || 'OTHER'] || 0) + 1;
+
+      // IMEI / location footprint (all CDR rows for subject)
+      const imei = String(rec.imei || '').trim();
+      if (imei && imei !== '0' && imei.toLowerCase() !== 'none') {
+        imeiByTarget[t][imei] = (imeiByTarget[t][imei] || 0) + 1;
+        pushEntityEvent(t, 'IMEI:' + imei, rec);
+      }
+      const lac = String(rec.lac || '').trim();
+      const ci = String(rec.ci || '').trim();
+      if (lac && ci && lac !== '0' && ci !== '0') {
+        const cell = lac + '/' + ci;
+        cellByTarget[t][cell] = (cellByTarget[t][cell] || 0) + 1;
+        pushEntityEvent(t, 'CELL:' + cell, rec);
+      }
+      const addr = String(rec.address || '').trim().replace(/\s+/g, ' ');
+      if (addr && addr.length >= 8) {
+        const addrKey = addr.toUpperCase();
+        addrByTarget[t][addrKey] = (addrByTarget[t][addrKey] || 0) + 1;
+        if (!state._addrDisplay) state._addrDisplay = {};
+        state._addrDisplay[addrKey] = addr;
+        pushEntityEvent(t, 'ADDR:' + addrKey, rec);
+      }
+
+      const b = rec.bparty;
+      if (!isSubscriber(b)) return;
+      contacts[t][b] = (contacts[t][b] || 0) + 1;
+      const key = [t, b].sort().join('|');
+      if (!eventsByPair[key]) eventsByPair[key] = [];
+      if (!rec.start) return;
+      const epoch = Math.floor(rec.start.getTime()/1000);
+      const d = rec.start;
+      const pad = n => String(n).padStart(2,'0');
+      eventsByPair[key].push({
+        t: epoch,
+        d: rec.duration || 0,
+        dt: `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`,
+        usage: rec.usage || '',
+        usage_class: rec.usage_class || '',
+        network: rec.network || '',
+        provider: rec.provider || '',
+        imei: rec.imei || '',
+        imsi: rec.imsi || '',
+        lac: rec.lac || '',
+        ci: rec.ci || '',
+        address: rec.address || '',
+        aparty: rec.aparty || '',
+        bparty: rec.bparty || '',
+        target: rec.target || '',
+        source: rec.source || '',
+      });
+    });
+
+    Object.keys(eventsByPair).forEach(k => eventsByPair[k].sort((a,b)=>b.t-a.t));
+    Object.keys(entityEvents).forEach(k => entityEvents[k].sort((a,b)=>b.t-a.t));
+
+    // --- common IMEI / location detection ---
+    function sharedEntity(byTarget, makeId, limit) {
+      const owners = {};
+      Object.keys(byTarget).forEach(t => {
+        Object.keys(byTarget[t]).forEach(k => {
+          if (!owners[k]) owners[k] = new Set();
+          owners[k].add(t);
+        });
+      });
+      return Object.keys(owners)
+        .filter(k => owners[k].size >= 2)
+        .map(k => {
+          const ts = [...owners[k]].sort();
+          const counts = {};
+          let hits = 0;
+          ts.forEach(t => { counts[t] = byTarget[t][k] || 0; hits += counts[t]; });
+          return { key: k, id: makeId(k), targets: ts, target_count: ts.length, total_hits: hits, counts };
+        })
+        .sort((a,b)=> b.target_count - a.target_count || b.total_hits - a.total_hits)
+        .slice(0, limit);
+    }
+
+    const sharedImei = sharedEntity(imeiByTarget, k => 'IMEI:' + k, 20);
+    const sharedCells = sharedEntity(cellByTarget, k => 'CELL:' + k, 30);
+    const sharedAddrs = sharedEntity(addrByTarget, k => 'ADDR:' + k, 30);
+
+    const contactOwners = {};
+    targets.forEach(t => {
+      Object.keys(contacts[t]).forEach(num => {
+        if (targets.includes(num)) return;
+        if (!contactOwners[num]) contactOwners[num] = new Set();
+        contactOwners[num].add(t);
+      });
+    });
+    const multiCommon = Object.keys(contactOwners)
+      .filter(num => contactOwners[num].size >= 2)
+      .map(num => {
+        const owners = [...contactOwners[num]].sort();
+        const per = {};
+        let hits = 0;
+        owners.forEach(t => { per[t] = contacts[t][num] || 0; hits += per[t]; });
+        return { number: num, targets: owners, target_count: owners.length, total_hits: hits, per_target: per };
+      })
+      .sort((a,b)=> b.target_count - a.target_count || b.total_hits - a.total_hits);
+
+    const graphNodes = new Set(targets);
+    const graphEdges = []; // {a,b,w,kind,entityEvents?}
+    const nodeMeta = {}; // id -> {kind,label,group,shape}
+
+    targets.forEach(t => {
+      nodeMeta[t] = { kind:'target', label: fmtMsisdn(t), group:'Subject', shape:'dot', ring:0, color:'#C0392B', size:38 };
+    });
+
+    // target-target direct
+    for (let i=0;i<targets.length;i++){
+      for (let j=i+1;j<targets.length;j++){
+        const a = targets[i], b = targets[j];
+        const ab = (contacts[a][b]||0) + (contacts[b][a]||0);
+        if (ab > 0) graphEdges.push({a,b,w:ab,kind:'target_link'});
+      }
+    }
+    multiCommon.slice(0,40).forEach(item => {
+      graphNodes.add(item.number);
+      nodeMeta[item.number] = { kind:'common', label: fmtMsisdn(item.number), group:'Common contact', shape:'dot', ring:1, color:'#2980B9', size:26 };
+      item.targets.forEach(t => graphEdges.push({a:t,b:item.number,w:item.per_target[t],kind:'common'}));
+    });
+    targets.forEach(t => {
+      let added = 0;
+      Object.keys(contacts[t]).sort((x,y)=>contacts[t][y]-contacts[t][x]).forEach(num => {
+        if (added >= 6) return;
+        if (targets.includes(num)) return;
+        if ((contactOwners[num]||new Set()).size >= 2) return;
+        if ((contacts[t][num]||0) < 3) return;
+        graphNodes.add(num);
+        nodeMeta[num] = { kind:'exclusive', label: fmtMsisdn(num), group:'Exclusive contact', shape:'dot', ring:2, color:'#27AE60', size:20 };
+        graphEdges.push({a:t,b:num,w:contacts[t][num],kind:'exclusive'});
+        added++;
+      });
+    });
+
+    // Common IMEI nodes — handset SVG icon
+    sharedImei.forEach(item => {
+      graphNodes.add(item.id);
+      const short = item.key.length > 10 ? ('…' + item.key.slice(-10)) : item.key;
+      nodeMeta[item.id] = {
+        kind:'imei', label:'IMEI ' + short, group:'Common IMEI / Handset',
+        shape:'image', ring:3, color:'#8E44AD', size:28,
+        title: 'Shared IMEI (handset)\n' + item.key + '\nTargets: ' + item.targets.map(fmtMsisdn).join(', ')
+      };
+      item.targets.forEach(t => graphEdges.push({a:t,b:item.id,w:item.counts[t],kind:'imei'}));
+    });
+
+    // Common LAC/CI nodes — tower SVG icon
+    sharedCells.forEach(item => {
+      graphNodes.add(item.id);
+      nodeMeta[item.id] = {
+        kind:'loc_cell', label: item.key, group:'Common LAC/CI Tower',
+        shape:'image', ring:3, color:'#148F77', size:30, fontSize:11,
+        title: 'Cell tower / LAC-CI\n' + item.key + '\nTargets: ' + item.targets.map(fmtMsisdn).join(', ')
+      };
+      item.targets.forEach(t => graphEdges.push({a:t,b:item.id,w:item.counts[t],kind:'loc_cell'}));
+    });
+
+    // Common Address nodes — location pin SVG icon
+    sharedAddrs.forEach(item => {
+      graphNodes.add(item.id);
+      const display = (state._addrDisplay && state._addrDisplay[item.key]) || item.key;
+      const short = display.length > 28 ? display.slice(0,27) + '…' : display;
+      nodeMeta[item.id] = {
+        kind:'loc_addr', label: short, group:'Common Address Location',
+        shape:'image', ring:3, color:'#D35400', size:30, fontSize:11,
+        title: 'Location address\n' + display + '\nTargets: ' + item.targets.map(fmtMsisdn).join(', ')
+      };
+      item.targets.forEach(t => graphEdges.push({a:t,b:item.id,w:item.counts[t],kind:'loc_addr'}));
+    });
+
+    const nodes = [];
+    [...graphNodes].forEach(n => {
+      const meta = nodeMeta[n] || { kind:'exclusive', label:String(n), group:'Contact', shape:'dot', ring:2, color:'#27AE60', size:20 };
+      const isLoc = meta.kind === 'loc_cell' || meta.kind === 'loc_addr' || meta.kind === 'imei';
+      const displayLabel = String(meta.label || '').replace(/^[📍📡📱]\s*/, '');
+      const baseTitle = meta.title || (meta.group + ' | ' + displayLabel);
+      const base = {
+        id:n,
+        label: displayLabel,
+        baseLabel: displayLabel,
+        title: baseTitle,
+        baseTitle: baseTitle,
+        group: meta.group,
+        kind: meta.kind,
+        ring: meta.ring,
+        shape: meta.shape || 'dot',
+        color:{background:meta.color,border:'#1B2631',highlight:{background:meta.color,border:'#000'},hover:{background:meta.color,border:'#000'}},
+        size: meta.size,
+        borderWidth: isLoc ? 0 : 2,
+        font:{
+          color:'#1B2631',
+          size: meta.fontSize || (meta.kind==='target'?12:10),
+          face:'Segoe UI, Tahoma, sans-serif',
+          strokeWidth:4,
+          strokeColor:'#F7F4EF',
+          vadjust: meta.kind==='target' ? -32 : -26
+        }
+      };
+      nodes.push(applyNodeVisual(base));
+    });
+
+    const rings = {0:[],1:[],2:[],3:[]};
+    nodes.forEach(n => {
+      const r = (n.ring in rings) ? n.ring : 2;
+      rings[r].push(n);
+    });
+    const radii = RING_RADII;
+    Object.keys(rings).forEach(ring => {
+      const members = rings[ring].sort((a,b)=>String(a.id).localeCompare(String(b.id)));
+      const count = Math.max(members.length,1);
+      const phase = (+ring * 0.28) + (ring>0?0.08:0);
+      members.forEach((n,i) => {
+        const ang = phase + (2*Math.PI*i/count) - Math.PI/2;
+        n.x = radii[ring] * Math.cos(ang);
+        n.y = radii[ring] * Math.sin(ang);
+        n.baseX = n.x;
+        n.baseY = n.y;
+      });
+    });
+
+    const merged = {};
+    graphEdges.forEach(e => {
+      const key = [e.a,e.b].sort().join('|');
+      const isEntity = e.kind === 'imei' || e.kind === 'loc_cell' || e.kind === 'loc_addr';
+      const ev = isEntity ? (entityEvents[key] || []) : (eventsByPair[key] || []);
+      const w = ev.length || e.w;
+      const dur = ev.reduce((s,x)=>s+(x.d||0),0);
+      if (!merged[key]) {
+        const colorMap = {
+          target_link:'rgba(146,43,33,0.92)',
+          common:'rgba(36,113,163,0.88)',
+          exclusive:'rgba(30,132,73,0.82)',
+          imei:'rgba(142,68,173,0.9)',
+          loc_cell:'rgba(20,143,119,0.9)',
+          loc_addr:'rgba(211,84,0,0.9)',
+        };
+        const hiMap = {
+          target_link:'#922B21', common:'#2471A3', exclusive:'#1E8449',
+          imei:'#6C3483', loc_cell:'#0E6655', loc_addr:'#A04000',
+        };
+        const parts = key.split('|');
+        const lengthByKind = {
+          target_link: 360, common: 420, exclusive: 520,
+          imei: 560, loc_cell: 600, loc_addr: 600
+        };
+        merged[key] = {
+          from: parts[0], to: parts[1], value:w, duration:dur, duration_label:fmtDur(dur),
+          width: edgeWidthFor(w),
+          length: lengthByKind[e.kind] || 480,
+          title: isEntity
+            ? `${w} CDR hits | ${fmtDur(dur)} (${e.kind})`
+            : `${w} events | ${fmtDur(dur)}`,
+          color:{color:colorMap[e.kind]||'rgba(30,132,73,0.82)', highlight:hiMap[e.kind]||'#1E8449', hover:hiMap[e.kind]||'#1E8449', opacity:0.95},
+          kind:e.kind, events:ev, selectionWidth:3.5, hoverWidth:2.2
+        };
+      }
+    });
+    const edges = Object.values(merged).sort((a,b)=>b.value-a.value);
+    edges.forEach((e,i) => {
+      const step = 0.06 + (i%8)*0.028;
+      e.smooth = {enabled:true, type: i%2===0?'curvedCW':'curvedCCW', roundness: Math.min(0.32, step)};
+      const show = e.kind==='target_link' || e.kind==='imei' || e.kind==='loc_cell' || e.kind==='loc_addr' || e.value>=12 || e.duration>=900;
+      e.label = show ? edgeLabel(e.value, e.duration) : '';
+      e.font = {align:'middle', size:11, color:'#1B2631', strokeWidth:6, strokeColor:'#F7F4EF', face:'Segoe UI, Tahoma, sans-serif', background:'rgba(247,244,239,0.96)'};
+    });
+
+    let tmin=null, tmax=null;
+    const collectTs = list => list.forEach(ev => {
+      if (!tmin || ev.t < tmin) tmin = ev.t;
+      if (!tmax || ev.t > tmax) tmax = ev.t;
+    });
+    Object.values(eventsByPair).forEach(collectTs);
+    Object.values(entityEvents).forEach(collectTs);
+    if (!tmin) { tmin = Math.floor(Date.now()/1000); tmax = tmin; }
+
+    return {
+      targets,
+      nodes,
+      edges,
+      shared_imei: sharedImei,
+      shared_cells: sharedCells,
+      shared_addrs: sharedAddrs.map(x => Object.assign({}, x, {
+        display: (state._addrDisplay && state._addrDisplay[x.key]) || x.key
+      })),
+      time_range: {
+        min: toLocalInput(new Date(tmin*1000)),
+        max: toLocalInput(new Date(tmax*1000)),
+        min_epoch: tmin,
+        max_epoch: tmax,
+      },
+      usage_types: Object.keys(usageCounter).sort((a,b)=>usageCounter[b]-usageCounter[a]).map(id => ({id,label:id,count:usageCounter[id]})),
+      stats: {
+        records: records.length,
+        targets: targets.length,
+        common_contacts: multiCommon.length,
+        shared_imei: sharedImei.length,
+        shared_cells: sharedCells.length,
+        shared_addrs: sharedAddrs.length,
+        total_duration: edges.reduce((s,e)=>s+(e.kind==='target_link'||e.kind==='common'||e.kind==='exclusive'?e.duration:0),0),
+        total_duration_label: fmtDur(edges.reduce((s,e)=>s+(e.kind==='target_link'||e.kind==='common'||e.kind==='exclusive'?e.duration:0),0)),
+      },
+      multi_common: multiCommon.slice(0,40),
+    };
+  }
+
+  $('btnBuild').onclick = () => {
+    try {
+      clearError();
+      if (state.staging.length) {
+        if (!confirm('Some files are still unmapped and will be ignored. Continue?')) return;
+      }
+      state.DATA = buildData();
+      initChart();
+      $('empty').style.display = 'none';
+      const s = state.DATA.stats;
+      $('detectHint').textContent =
+        `Detected: ${s.shared_imei} shared IMEI · ${s.shared_cells} shared LAC/CI · ${s.shared_addrs} shared Address · ${s.common_contacts} common numbers`;
+      $('details').textContent =
+        `Chart built\nFiles: ${state.datasets.length}\nRecords: ${s.records}\nSubjects: ${state.DATA.targets.join(', ')}\n` +
+        `Common contacts: ${s.common_contacts}\nCommon IMEI: ${s.shared_imei}\nCommon LAC/CI: ${s.shared_cells}\nCommon Address: ${s.shared_addrs}`;
+      if (isMobileLayout()) setPanelOpen(false);
+    } catch (err) {
+      showError(String(err.message || err));
+    }
+  };
+
+  // -------- chart runtime (filters / modal / search) ----------
+  function initChart() {
+    const DATA = state.DATA;
+    const timeRange = DATA.time_range;
+    $('dtFrom').value = timeRange.min;
+    $('dtTo').value = timeRange.max;
+    $('dtFrom').min = timeRange.min; $('dtFrom').max = timeRange.max;
+    $('dtTo').min = timeRange.min; $('dtTo').max = timeRange.max;
+    $('timeHint').textContent = `Full range: ${timeRange.min} → ${timeRange.max}`;
+
+    $('usageFilters').innerHTML = (DATA.usage_types||[]).map(u => {
+      const id = 'usage_' + String(u.id).replace(/[^A-Za-z0-9_]/g,'_');
+      return `<label><input type="checkbox" class="usageChk" id="${id}" data-usage="${escAttr(u.id)}" checked> ${esc(u.label)} <span style="color:#8a9199">(${Number(u.count||0).toLocaleString()})</span></label>`;
+    }).join('');
+
+    state.rawNodes = DATA.nodes.slice();
+    state.rawEdges = DATA.edges.slice();
+    state.hiddenNodes = {};
+    state.hiddenEdges = {};
+    state.history = { undo: [], redo: [] };
+    updateEditButtons();
+
+    if (state.network) { state.network.destroy(); state.network = null; }
+    state.nodesDS = new vis.DataSet(state.rawNodes.map(n => applyNodeVisual(n)));
+    state.edgesDS = new vis.DataSet(state.rawEdges.map((e,i)=>decorateEdge(e,i,state.labelMode,null)));
+
+    state.network = new vis.Network($('network'), {nodes: state.nodesDS, edges: state.edgesDS}, {
+      autoResize:true, height:'100%', width:'100%',
+      interaction:{hover:true, tooltipDelay:80, dragNodes:true, dragView:true, zoomView:true, navigationButtons:true, multiselect:true},
+      layout:{improvedLayout:false, randomSeed:42},
+      physics:{enabled:false},
+      edges:{
+        smooth:{enabled:true,type:'curvedCW',roundness:0.16},
+        selectionWidth:3.5,
+        hoverWidth:2.2,
+        color:{inherit:false},
+        font:{size:11, align:'middle', strokeWidth:6, strokeColor:'#F7F4EF', color:'#1B2631', background:'rgba(247,244,239,0.96)'}
+      },
+      nodes:{shadow:true}
+    });
+
+    state.network.on('doubleClick', params => {
+      if (params.nodes && params.nodes.length) { openNodeModal(params.nodes[0]); return; }
+      if (params.edges && params.edges.length) { openEdgeModal(params.edges[0]); return; }
+    });
+    state.network.on('click', params => {
+      updateEditButtons();
+      if (params.nodes.length) {
+        const id = params.nodes[0];
+        fillNodeEditPanel(id);
+        const node = state.nodesDS.get(id);
+        const edges = state.network.getConnectedEdges(id);
+        let total=0, dur=0;
+        edges.forEach(eid => { const e=state.edgesDS.get(eid); total+=Number(e.value||0); dur+=Number(e.duration||0); });
+        const ann = (state.annotations && state.annotations[id]) || {};
+        const nickLine = ann.nickname ? ('Nickname: ' + ann.nickname + '\n') : '';
+        const noteLine = ann.comment ? ('Note: ' + ann.comment + '\n') : '';
+        const baseLine = (node.baseLabel && node.baseLabel !== node.label) ? ('Number/label: ' + node.baseLabel + '\n') : '';
+        $('details').textContent = `${node.group}\n${nickLine}${noteLine}${baseLine}${node.label}\nID: ${id}\nLinks: ${edges.length}\nEvents: ${total}\nDuration: ${fmtDur(dur)}\n\nTip: Set nickname/icon below. Hide node / Hide isolated / Hide edge temporarily.`;
+      } else if (params.edges.length) {
+        resetNodeEditPanel();
+        const e = state.edgesDS.get(params.edges[0]);
+        $('details').textContent = `Link\n${e.from} ↔ ${e.to}\nEvents: ${e.value}\nDuration: ${e.duration_label||fmtDur(e.duration)}\nType: ${e.kind}`;
+      } else {
+        resetNodeEditPanel();
+      }
+    });
+    state.network.on('selectNode', params => {
+      updateEditButtons();
+      if (params && params.nodes && params.nodes.length) fillNodeEditPanel(params.nodes[0]);
+    });
+    state.network.on('deselectNode', () => { updateEditButtons(); applyFilters(true); });
+    state.network.on('selectEdge', () => updateEditButtons());
+    state.network.on('deselectEdge', () => { updateEditButtons(); applyFilters(true); });
+    state.network.on('dragEnd', params => {
+      if (!params.nodes || !params.nodes.length) return;
+      syncPositionsFromNetwork(params.nodes);
+    });
+
+    document.querySelectorAll('.usageChk').forEach(el => el.onchange = () => applyFilters(false));
+    applyFilters(true);
+    setTimeout(() => state.network.fit({padding:40}), 150);
+  }
+
+  function syncPositionsFromNetwork(ids) {
+    if (!state.network) return;
+    const pos = state.network.getPositions(ids && ids.length ? ids : undefined);
+    const updates = [];
+    Object.keys(pos).forEach(id => {
+      const p = pos[id];
+      const raw = state.rawNodes.find(n => String(n.id) === String(id));
+      if (raw) { raw.x = p.x; raw.y = p.y; }
+      updates.push({id, x:p.x, y:p.y});
+    });
+    if (updates.length && state.nodesDS) state.nodesDS.update(updates);
+  }
+
+  function setPhysicsButton(on) {
+    state.physicsOn = !!on;
+    $('btnPhysics').textContent = 'Physics: ' + (state.physicsOn ? 'ON' : 'OFF');
+  }
+
+  function resetLayout() {
+    if (!state.network || !state.rawNodes.length) return;
+    if (state._respaceTimer) { clearTimeout(state._respaceTimer); state._respaceTimer = null; }
+    state.network.setOptions({physics:{enabled:false}});
+    setPhysicsButton(false);
+    const updates = state.rawNodes.map(n => {
+      const x = (n.baseX != null) ? n.baseX : n.x;
+      const y = (n.baseY != null) ? n.baseY : n.y;
+      n.x = x; n.y = y;
+      return {id:n.id, x, y, fixed:{x:false,y:false}};
+    });
+    if (state.nodesDS) state.nodesDS.update(updates.filter(u => state.nodesDS.get(u.id)));
+    state.network.fit({animation:true, padding:40});
+    $('details').textContent = 'Layout reset to original ring positions.';
+  }
+
+  function respaceLayout() {
+    if (!state.network || !state.nodesDS) return;
+    if (state._respaceTimer) { clearTimeout(state._respaceTimer); state._respaceTimer = null; }
+    const ids = state.nodesDS.getIds();
+    if (!ids.length) return;
+    // unlock any fixed nodes and seed mild random jitter so physics can re-arrange
+    state.nodesDS.update(ids.map(id => {
+      const n = state.nodesDS.get(id);
+      return {
+        id,
+        x: (n.x || 0) + (Math.random() - 0.5) * 40,
+        y: (n.y || 0) + (Math.random() - 0.5) * 40,
+        fixed: {x:false, y:false}
+      };
+    }));
+    state.network.setOptions({
+      physics: {
+        enabled: true,
+        solver: 'forceAtlas2Based',
+        forceAtlas2Based: {
+          gravitationalConstant: -72,
+          centralGravity: 0.004,
+          springLength: 260,
+          springConstant: 0.045,
+          damping: 0.45,
+          avoidOverlap: 1
+        },
+        stabilization: {enabled:true, iterations:260, updateInterval:25, fit:true}
+      }
+    });
+    setPhysicsButton(true);
+    $('details').textContent = 'Re-spacing nodes…';
+    let done = false;
+    const finish = () => {
+      if (done) return;
+      done = true;
+      syncPositionsFromNetwork(ids);
+      state.network.setOptions({physics:{enabled:false}});
+      setPhysicsButton(false);
+      state.network.fit({animation:true, padding:50});
+      $('details').textContent = 'Re-space complete. Positions updated.';
+      try { state.network.off('stabilized', finish); } catch (_) {}
+      if (state._respaceTimer) { clearTimeout(state._respaceTimer); state._respaceTimer = null; }
+    };
+    state.network.once('stabilized', finish);
+    state.network.stabilize(260);
+    // safety stop if stabilize event is slow/missed
+    state._respaceTimer = setTimeout(finish, 4200);
+  }
+
+  function getSelectedUsage() {
+    const selected = {}; let any=false; const boxes=[...document.querySelectorAll('.usageChk')];
+    boxes.forEach(el => { if (el.checked) { selected[el.getAttribute('data-usage')]=true; any=true; } });
+    return { map:selected, any, all: any && boxes.length===Object.keys(selected).length };
+  }
+  function getTimeWindow() {
+    const parse = v => { const d=new Date(v); return isNaN(d)?null:Math.floor(d.getTime()/1000); };
+    let from = parse($('dtFrom').value); let to = parse($('dtTo').value);
+    const tr = state.DATA.time_range;
+    if (from==null) from = tr.min_epoch; if (to==null) to = tr.max_epoch;
+    if ($('dtTo').value && $('dtTo').value.length<=16) to += 59;
+    if (from>to) { const t=from; from=to; to=t; }
+    return {from,to};
+  }
+  function eventTime(ev){ return Number((ev&&ev.t)!=null?ev.t:(ev&&ev[0])||0); }
+  function eventDur(ev){ return Number((ev&&ev.d)!=null?ev.d:(ev&&ev[1])||0); }
+  function eventUsage(ev){ return (ev&& (ev.usage_class||ev.usage)) || 'OTHER'; }
+
+  function edgeInWindow(e, win, usageSel) {
+    if (!e.events || !e.events.length) return {ok:false,value:0,duration:0,duration_label:'0s',logs:[]};
+    let count=0,dur=0; const logs=[];
+    e.events.forEach(ev => {
+      const t=eventTime(ev);
+      if (t<win.from||t>win.to) return;
+      if (!usageSel.map[eventUsage(ev)]) return;
+      count++; dur+=eventDur(ev); logs.push(ev);
+    });
+    return {ok:count>0,value:count,duration:dur,duration_label:fmtDur(dur),logs};
+  }
+
+  function decorateEdge(e,i,labelMode,metrics){
+    const copy = Object.assign({id:i+1}, e);
+    const value = metrics?metrics.value:(e.value||0);
+    const duration = metrics?metrics.duration:(e.duration||0);
+    const durationLabel = metrics?metrics.duration_label:(e.duration_label||fmtDur(duration));
+    copy.value=value; copy.duration=duration; copy.duration_label=durationLabel;
+    copy.width = edgeWidthFor(value);
+    copy.selectionWidth = 3.5;
+    copy.hoverWidth = 2.2;
+    copy.title = value+' events | '+durationLabel;
+    let show=false;
+    if (labelMode==='all') show=true;
+    else if (labelMode==='key') show = e.kind==='target_link' || e.kind==='imei' || e.kind==='loc_cell' || e.kind==='loc_addr' || value>=12 || duration>=900;
+    copy.label = show ? (value+' | '+durationLabel) : '';
+    copy.font = Object.assign({
+      align:'middle', size:11, color:'#1B2631', strokeWidth:6, strokeColor:'#F7F4EF',
+      face:'Segoe UI, Tahoma, sans-serif', background:'rgba(247,244,239,0.96)'
+    }, e.font || {});
+    return copy;
+  }
+
+    function applyFilters(keepView){
+    if (!state.DATA) return;
+    const show = {
+      target:$('f_target').checked,
+      common:$('f_common').checked,
+      exclusive:$('f_exclusive').checked,
+      imei:$('f_imei').checked,
+      loc_cell:$('f_loc_cell').checked,
+      loc_addr:$('f_loc_addr').checked
+    };
+    const win = getTimeWindow();
+    const usageSel = getSelectedUsage();
+    const timed=[]; const active={}; let evCount=0, evDur=0;
+    state.DATA.targets.forEach(t => active[t]=true);
+    state.rawEdges.forEach(e => {
+      const m = edgeInWindow(e, win, usageSel);
+      if (!m.ok) return;
+      timed.push({e,metrics:m});
+      active[e.from]=true; active[e.to]=true;
+      if (e.kind==='target_link' || e.kind==='common' || e.kind==='exclusive') {
+        evCount+=m.value; evDur+=m.duration;
+      }
+    });
+    const visible={};
+    state.rawNodes.forEach(n => {
+      if (state.hiddenNodes[n.id]) return;
+      if (!show[n.kind]) return;
+      if (n.kind==='target') { visible[n.id]=true; return; }
+      if (active[n.id]) visible[n.id]=true;
+    });
+    // ensure entity nodes linked to visible subjects stay available
+    timed.forEach(item => {
+      const e = item.e;
+      if (!(e.kind==='imei' || e.kind==='loc_cell' || e.kind==='loc_addr') || !show[e.kind]) return;
+      if (state.hiddenNodes[e.from] || state.hiddenNodes[e.to]) return;
+      const aIsTarget = state.DATA.targets.includes(e.from);
+      const bIsTarget = state.DATA.targets.includes(e.to);
+      if (aIsTarget && visible[e.from] && show[e.kind] && !state.hiddenNodes[e.to]) visible[e.to] = true;
+      if (bIsTarget && visible[e.to] && show[e.kind] && !state.hiddenNodes[e.from]) visible[e.from] = true;
+    });
+
+    const finalEdges = timed.filter(item => {
+      const e = item.e;
+      if (!visible[e.from] || !visible[e.to]) return false;
+      if (state.hiddenEdges && state.hiddenEdges[edgePairKey(e.from, e.to)]) return false;
+      if (e.kind === 'target_link') return show.target;
+      if (e.kind === 'common') return show.common;
+      if (e.kind === 'exclusive') return show.exclusive;
+      if (e.kind === 'imei') return show.imei;
+      if (e.kind === 'loc_cell') return show.loc_cell;
+      if (e.kind === 'loc_addr') return show.loc_addr;
+      return true;
+    });
+
+    state.nodesDS.clear();
+    state.nodesDS.add(state.rawNodes.filter(n=>visible[n.id]).map(n => applyNodeVisual(n)));
+    let ei=0;
+    state.edgesDS.clear();
+    state.edgesDS.add(finalEdges.map(item => decorateEdge(item.e, ei++, state.labelMode, item.metrics)));
+    $('timeHint').textContent = `Filter: ${$('dtFrom').value} → ${$('dtTo').value} · ${evCount} events · ${fmtDur(evDur)}`;
+    const selected = Object.keys(usageSel.map);
+    $('usageHint').textContent = !usageSel.any ? 'No usage selected' : (usageSel.all?'All usage types':('Usage: '+selected.join(', ')));
+    applySearchHighlight();
+    if (!keepView && !getSearchQueries().length) state.network.fit({animation:true,padding:40});
+  }
+
+  function getSearchQueries(){
+    return ($('search').value||'').split(/[\s,;|/]+/).map(s=>s.trim()).filter(Boolean);
+  }
+  function normalizeDigits(v){
+    let d=String(v||'').replace(/\D/g,'');
+    if (d.length===11 && d[0]==='0') d='88'+d;
+    if (d.length===10 && d[0]==='1') d='880'+d;
+    return d;
+  }
+  function nodeMatches(node, queries){
+    const id=String(node.id||''), label=String(node.label||'');
+    const idD=normalizeDigits(id), labD=normalizeDigits(label);
+    return queries.some(q => {
+      const ql=q.toLowerCase(), qd=normalizeDigits(q);
+      return id.toLowerCase().includes(ql) || label.toLowerCase().includes(ql) ||
+        (qd && (idD===qd || idD.includes(qd) || labD===qd));
+    });
+  }
+  function applySearchHighlight(){
+    if (!state.nodesDS) return;
+    const queries=getSearchQueries();
+    const ids=state.nodesDS.getIds();
+    if (!queries.length){
+      $('searchHit').textContent='No search';
+      state.nodesDS.update(ids.map(id=>{
+        const src=state.rawNodes.find(n=>n.id===id)||state.nodesDS.get(id);
+        return {id, size:src.size, borderWidth:src.borderWidth||2, color:src.color, opacity:1, font:Object.assign({},src.font), shadow:{enabled:true,color:'rgba(0,0,0,.12)',size:5,x:1,y:1}};
+      }));
+      return;
+    }
+    const matched={};
+    ids.forEach(id => { if (nodeMatches(state.nodesDS.get(id), queries)) matched[id]=true; });
+    const matchedIds=Object.keys(matched);
+    state.nodesDS.update(ids.map(id=>{
+      const src=state.rawNodes.find(n=>n.id===id)||state.nodesDS.get(id);
+      if (matched[id]) {
+        return {id, size:(src.size||24)+14, borderWidth:5,
+          color:{background:src.color.background, border:'#F1C40F', highlight:{background:src.color.background,border:'#F39C12'}, hover:{background:src.color.background,border:'#F39C12'}},
+          opacity:1, font:Object.assign({},src.font,{color:'#7D6608', size:(src.font.size||11)+2}),
+          shadow:{enabled:true,color:'rgba(241,196,15,.85)',size:18,x:0,y:0}};
+      }
+      return {id, size:src.size, borderWidth:src.borderWidth||2, color:src.color, opacity:0.28, font:Object.assign({},src.font,{color:'#AAB0B6'}), shadow:{enabled:false}};
+    }));
+    state.edgesDS.update(state.edgesDS.getIds().map(eid=>{
+      const e=state.edgesDS.get(eid);
+      const both=matched[e.from]&&matched[e.to], one=matched[e.from]||matched[e.to];
+      if (both) return {id:eid, color:{color:'#F39C12',highlight:'#D68910',hover:'#D68910',opacity:1}, width:Math.max(4.5,(e.width||2)+2.5), label:(e.value||0)+' | '+(e.duration_label||fmtDur(e.duration))};
+      if (one) return {id:eid, color:{color:'rgba(243,156,18,.7)',highlight:'#F39C12',hover:'#F39C12',opacity:.9}, width:Math.max(3,e.width||2)};
+      return {id:eid, color:{color:'rgba(180,180,180,.22)',highlight:'#B0B0B0',hover:'#B0B0B0',opacity:.2}, width:1, label:''};
+    }));
+    $('searchHit').textContent = matchedIds.length ? `${matchedIds.length} hits / ${queries.length} queries` : `0 hits / ${queries.length} queries`;
+    if (matchedIds.length) {
+      state.network.selectNodes(matchedIds);
+      state.network.fit({nodes:matchedIds, animation:true, padding:60});
+    }
+  }
+
+  function openEdgeModal(edgeId){
+    const e=state.edgesDS.get(edgeId); if(!e) return;
+    const win=getTimeWindow(); const usageSel=getSelectedUsage();
+    const metrics=edgeInWindow(e, win, usageSel);
+    const logs=(metrics.logs||[]).slice().sort((a,b)=>eventTime(b)-eventTime(a));
+    state.modal={logs, edge:e, node:null};
+    $('modalTitle').textContent = `${fmtMsisdn(e.from)}  ↔  ${fmtMsisdn(e.to)}`;
+    $('modalMeta').innerHTML = `Type: <span class="badge">${esc(e.kind)}</span> · ${logs.length} logs · ${esc(metrics.duration_label)}<br>${esc(e.from)} ↔ ${esc(e.to)}`;
+    $('modalFilter').value='';
+    renderModalRows('');
+    $('edgeModal').classList.add('open');
+  }
+
+  function logKey(log){
+    return [
+      eventTime(log), eventDur(log), log.aparty||'', log.bparty||'',
+      log.usage||'', log.imei||'', log.lac||'', log.ci||'', log.address||'', log.source||'', log.dt||''
+    ].join('|');
+  }
+
+  function openNodeModal(nodeId){
+    if (!state.network || !state.nodesDS) return;
+    const node = state.nodesDS.get(nodeId) || state.rawNodes.find(n => String(n.id) === String(nodeId));
+    if (!node) return;
+    const win = getTimeWindow();
+    const usageSel = getSelectedUsage();
+    const edgeIds = state.network.getConnectedEdges(nodeId) || [];
+    const seen = {};
+    const logs = [];
+    let totalDur = 0;
+    edgeIds.forEach(eid => {
+      const e = state.edgesDS.get(eid);
+      if (!e) return;
+      const metrics = edgeInWindow(e, win, usageSel);
+      (metrics.logs || []).forEach(log => {
+        const k = logKey(log);
+        if (seen[k]) return;
+        seen[k] = true;
+        logs.push(log);
+        totalDur += eventDur(log);
+      });
+    });
+    // Fallback: if no connected filtered edges, still scan rawEdges involving this node
+    if (!logs.length && state.rawEdges) {
+      state.rawEdges.forEach(e => {
+        if (String(e.from) !== String(nodeId) && String(e.to) !== String(nodeId)) return;
+        const metrics = edgeInWindow(e, win, usageSel);
+        (metrics.logs || []).forEach(log => {
+          const k = logKey(log);
+          if (seen[k]) return;
+          seen[k] = true;
+          logs.push(log);
+          totalDur += eventDur(log);
+        });
+      });
+    }
+    logs.sort((a,b)=>eventTime(b)-eventTime(a));
+    state.modal = { logs, edge:null, node };
+    const label = node.label || String(nodeId);
+    $('modalTitle').textContent = `Node logs · ${label}`;
+    $('modalMeta').innerHTML =
+      `Kind: <span class="badge">${esc(node.kind || node.group || '-')}</span> · ${logs.length} logs · ${esc(fmtDur(totalDur))}<br>` +
+      `ID: ${esc(String(nodeId))} · Links: ${edgeIds.length}`;
+    $('modalFilter').value = '';
+    renderModalRows('');
+    $('edgeModal').classList.add('open');
+  }
+
+  function renderModalRows(q){
+    q=(q||'').toLowerCase();
+    const rows=state.modal.logs.filter(log=>{
+      if(!q) return true;
+      return [log.dt,log.usage,log.aparty,log.bparty,log.network,log.provider,log.imei,log.address,log.source].join(' ').toLowerCase().includes(q);
+    });
+    $('modalRows').innerHTML = rows.length ? rows.map((log,i)=>`<tr>
+      <td>${i+1}</td><td>${esc(log.dt||'-')}</td><td>${esc(fmtDur(eventDur(log)))}</td><td>${esc(log.usage||log.usage_class||'-')}</td>
+      <td>${esc(log.aparty||'-')}</td><td>${esc(log.bparty||'-')}</td><td>${esc(log.network||'-')}</td><td>${esc(log.provider||'-')}</td>
+      <td>${esc(log.imei||'-')}</td><td>${esc((log.lac||'-')+' / '+(log.ci||'-'))}</td><td>${esc(log.address||'-')}</td><td>${esc(log.source||'-')}</td>
+    </tr>`).join('') : '<tr><td colspan="12" style="padding:16px;color:#7f8c8d">No logs in current filters</td></tr>';
+  }
+  function closeModal(){ $('edgeModal').classList.remove('open'); }
+
+  $('btnCloseModal').onclick=closeModal;
+  $('edgeModal').onclick=e=>{ if(e.target.id==='edgeModal') closeModal(); };
+  $('modalFilter').oninput=e=>renderModalRows(e.target.value);
+  $('btnExportCsv').onclick=()=>{
+    const logs = (state.modal.logs || []).slice();
+    if (!logs.length) { alert('No logs to export.'); return; }
+    const summary = buildRelationSummary(logs, state.modal.edge, state.modal.node);
+    const header = ['label','bparty','count','duration','from_datetime','to_datetime'];
+    const lines = [
+      header.join(','),
+      [
+        summary.label,
+        summary.bparty,
+        summary.count,
+        summary.duration,
+        summary.from_datetime,
+        summary.to_datetime
+      ].map(csvCell).join(',')
+    ];
+    downloadCsvBlob(lines, csvFileNameFromLabel(summary.label));
+  };
+
+  function csvCell(v){
+    return '"' + String(v ?? '').replace(/"/g, '""') + '"';
+  }
+
+  function csvFileNameFromLabel(label) {
+    const dig = String(label || '').replace(/\D/g, '');
+    let base = dig;
+    if (!base) {
+      base = String(label || 'cdr_export').replace(/[^\w\-]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 80);
+    }
+    return (base || 'cdr_export') + '.csv';
+  }
+
+  function downloadCsvBlob(lines, filename) {
+    const blob = new Blob(['\ufeff' + lines.join('\n')], {type:'text/csv;charset=utf-8'});
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = filename;
+    a.click();
+    URL.revokeObjectURL(a.href);
+  }
+
+  function fmtRecDt(d){
+    if (!d) return '';
+    if (typeof d === 'string') return d;
+    if (!(d instanceof Date) || isNaN(d)) return '';
+    const pad = n => String(n).padStart(2,'0');
+    return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+  }
+
+  /** Summary row: label=A-Party number; bparty only when single related number */
+  function buildRelationSummary(logs, edge, node){
+    let fromT = null, toT = null, fromDt = '', toDt = '';
+    let durationSec = 0;
+    const aparties = {};
+    const bparties = {};
+    (logs || []).forEach(log => {
+      const t = eventTime(log);
+      durationSec += eventDur(log);
+      if (t && (fromT == null || t < fromT)) { fromT = t; fromDt = log.dt || ''; }
+      if (t && (toT == null || t > toT)) { toT = t; toDt = log.dt || ''; }
+      const a = String(log.aparty || '').trim();
+      const b = String(log.bparty || '').trim();
+      if (a) aparties[a] = true;
+      if (b) bparties[b] = true;
+    });
+    const aKeys = Object.keys(aparties);
+    const bKeys = Object.keys(bparties);
+    let label = '';
+    let bparty = '';
+
+    if (edge) {
+      // Edge: label = A-party number; bparty filled (pair is single)
+      if (aKeys.length === 1) label = aKeys[0];
+      else label = String(edge.from || '');
+      if (bKeys.length === 1) bparty = bKeys[0];
+      else bparty = String(edge.to || '');
+    } else if (node) {
+      const nid = String(node.id || '');
+      if (node.kind === 'target' || node.kind === 'common' || node.kind === 'exclusive' || /^\d{10,15}$/.test(nid.replace(/\D/g,''))) {
+        label = nid.replace(/\D/g,'') ? nid : (aKeys[0] || nid);
+      } else {
+        label = aKeys.length === 1 ? aKeys[0] : (node.label || nid);
+      }
+      // Only fill bparty when exactly one related number
+      bparty = bKeys.length === 1 ? bKeys[0] : '';
+    } else {
+      label = aKeys.length === 1 ? aKeys[0] : '';
+      bparty = bKeys.length === 1 ? bKeys[0] : '';
+    }
+
+    // Prefer digit MSISDN as label
+    const dig = String(label).replace(/\D/g,'');
+    if (dig.length >= 10) label = dig;
+
+    return {
+      label,
+      bparty,
+      count: (logs || []).length,
+      duration: fmtDur(durationSec),
+      duration_sec: durationSec,
+      from_datetime: fromDt,
+      to_datetime: toDt
+    };
+  }
+
+  /** Relations CSV — columns: label, bparty, count, duration, from_datetime, to_datetime */
+  function downloadRelationCsv(){
+    if (!state.datasets.length) {
+      alert('No mapped files in workspace. Upload and map files first.');
+      return;
+    }
+    const agg = {};
+    const labelSet = {};
+    state.datasets.forEach(d => {
+      (d.records || []).forEach(rec => {
+        const aparty = String(rec.aparty || '').trim();
+        const bparty = String(rec.bparty || '').trim();
+        if (!aparty || !bparty) return;
+        const label = aparty.replace(/\D/g,'').length >= 10 ? aparty.replace(/\D/g,'') : aparty;
+        const key = label + '\0' + bparty;
+        const dt = fmtRecDt(rec.start);
+        const epoch = rec.start && !isNaN(rec.start) ? Math.floor(rec.start.getTime()/1000) : null;
+        labelSet[label] = true;
+        if (!agg[key]) {
+          agg[key] = {
+            label,
+            bparty,
+            count: 0,
+            duration_sec: 0,
+            from_datetime: dt,
+            to_datetime: dt,
+            _fromT: epoch,
+            _toT: epoch
+          };
+        }
+        const row = agg[key];
+        row.count += 1;
+        row.duration_sec += Number(rec.duration || 0) || 0;
+        if (epoch != null) {
+          if (row._fromT == null || epoch < row._fromT) { row._fromT = epoch; row.from_datetime = dt; }
+          if (row._toT == null || epoch > row._toT) { row._toT = epoch; row.to_datetime = dt; }
+        }
+      });
+    });
+    const rows = Object.values(agg).sort((x, y) =>
+      String(x.label).localeCompare(String(y.label)) ||
+      (y.count - x.count) ||
+      String(x.bparty).localeCompare(String(y.bparty))
+    );
+    if (!rows.length) {
+      alert('No A-Party / B-Party edges found in mapped files.');
+      return;
+    }
+    const header = ['label','bparty','count','duration','from_datetime','to_datetime'];
+    const lines = [header.join(',')];
+    rows.forEach(r => {
+      lines.push([
+        r.label,
+        r.bparty,
+        r.count,
+        fmtDur(r.duration_sec),
+        r.from_datetime || '',
+        r.to_datetime || ''
+      ].map(csvCell).join(','));
+    });
+    const labels = Object.keys(labelSet);
+    const fname = labels.length === 1
+      ? csvFileNameFromLabel(labels[0])
+      : csvFileNameFromLabel(state.datasets.map(d => d.target).filter(Boolean)[0] || 'relations');
+    downloadCsvBlob(lines, fname);
+    $('details').textContent =
+      'Relations CSV downloaded\nFile: ' + fname +
+      '\nRows: ' + rows.length.toLocaleString() +
+      '\nColumns: label, bparty, count, duration, from_datetime, to_datetime';
+  }
+  $('btnExportRelations').onclick = downloadRelationCsv;
+
+  document.addEventListener('keydown', e=>{ if(e.key==='Escape') closeModal(); });
+
+  $('btnApplyTime').onclick=()=>applyFilters(false);
+  $('btnResetTime').onclick=()=>{ if(!state.DATA) return; $('dtFrom').value=state.DATA.time_range.min; $('dtTo').value=state.DATA.time_range.max; applyFilters(false); };
+  $('dtFrom').onchange=$('dtTo').onchange=()=>applyFilters(false);
+  ['f_target','f_common','f_exclusive','f_imei','f_loc_cell','f_loc_addr'].forEach(id => $(id).onchange=()=>applyFilters(false));
+  $('btnUsageAll').onclick=()=>{ document.querySelectorAll('.usageChk').forEach(el=>el.checked=true); applyFilters(false); };
+  $('btnUsageCalls').onclick=()=>{ document.querySelectorAll('.usageChk').forEach(el=>el.checked=String(el.dataset.usage||'').includes('CALL')); applyFilters(false); };
+  $('btnUsageSms').onclick=()=>{ document.querySelectorAll('.usageChk').forEach(el=>el.checked=String(el.dataset.usage||'').includes('SMS')); applyFilters(false); };
+  let tSearch=null;
+  $('search').oninput=()=>{ clearTimeout(tSearch); tSearch=setTimeout(applySearchHighlight,180); };
+  $('btnClearSearch').onclick=()=>{ $('search').value=''; applyFilters(true); };
+  $('btnFit').onclick=()=>state.network && state.network.fit({animation:true,padding:40});
+  $('btnResetLayout').onclick=()=>resetLayout();
+  $('btnRespace').onclick=()=>respaceLayout();
+  $('btnSaveNodeAnn').onclick = () => { saveActiveNodeAnnotation(); };
+  $('btnClearNodeAnn').onclick = () => { clearActiveNodeAnnotation(); };
+
+  function updateEditButtons(){
+    const selectedNodes = (state.network && state.network.getSelectedNodes()) || [];
+    const selectedEdges = (state.network && state.network.getSelectedEdges()) || [];
+    const hiddenNodeCount = Object.keys(state.hiddenNodes || {}).length;
+    const hiddenEdgeCount = Object.keys(state.hiddenEdges || {}).length;
+    const hiddenCount = hiddenNodeCount + hiddenEdgeCount;
+    $('btnDeleteNode').disabled = !selectedNodes.length;
+    if ($('btnHideEdge')) $('btnHideEdge').disabled = !selectedEdges.length;
+    if ($('btnHideIsolated')) $('btnHideIsolated').disabled = !(state.nodesDS && state.nodesDS.length);
+    $('btnRestoreHidden').disabled = !hiddenCount;
+    $('btnUndo').disabled = !(state.history && state.history.undo.length);
+    $('btnRedo').disabled = !(state.history && state.history.redo.length);
+    if (hiddenCount) {
+      const parts = [];
+      if (hiddenNodeCount) parts.push(hiddenNodeCount + ' node');
+      if (hiddenEdgeCount) parts.push(hiddenEdgeCount + ' edge');
+      $('btnRestoreHidden').textContent = 'Restore hidden (' + parts.join(', ') + ')';
+    } else {
+      $('btnRestoreHidden').textContent = 'Restore hidden';
+    }
+  }
+
+  function edgePairKey(a, b) {
+    return [String(a), String(b)].sort().join('|');
+  }
+
+  function pushHistory(action){
+    state.history.undo.push(action);
+    if (state.history.undo.length > 80) state.history.undo.shift();
+    state.history.redo = [];
+    updateEditButtons();
+  }
+
+  function hideNodesTemp(ids, record){
+    const list = [...new Set((ids || []).map(String))].filter(id => id && !state.hiddenNodes[id]);
+    if (!list.length) return;
+    list.forEach(id => { state.hiddenNodes[id] = true; });
+    if (record !== false) pushHistory({ type:'hide', ids: list });
+    if (state.network) state.network.unselectAll();
+    applyFilters(true);
+    updateEditButtons();
+    $('details').textContent = 'Temporarily hidden ' + list.length + ' node(s).\nUse Undo or Restore hidden to bring them back.';
+  }
+
+  function showNodesTemp(ids, record){
+    const list = [...new Set((ids || []).map(String))].filter(id => state.hiddenNodes[id]);
+    if (!list.length) return;
+    list.forEach(id => { delete state.hiddenNodes[id]; });
+    if (record !== false) pushHistory({ type:'show', ids: list });
+    applyFilters(true);
+    updateEditButtons();
+  }
+
+  function hideEdgesTemp(keys, record){
+    if (!state.hiddenEdges) state.hiddenEdges = {};
+    const list = [...new Set((keys || []).map(String))].filter(k => k && !state.hiddenEdges[k]);
+    if (!list.length) return;
+    list.forEach(k => { state.hiddenEdges[k] = true; });
+    if (record !== false) pushHistory({ type:'hide_edges', keys: list });
+    if (state.network) state.network.unselectAll();
+    applyFilters(true);
+    updateEditButtons();
+    $('details').textContent = 'Temporarily hidden ' + list.length + ' edge(s).\nUse Undo or Restore hidden to bring them back.';
+  }
+
+  function showEdgesTemp(keys, record){
+    if (!state.hiddenEdges) state.hiddenEdges = {};
+    const list = [...new Set((keys || []).map(String))].filter(k => state.hiddenEdges[k]);
+    if (!list.length) return;
+    list.forEach(k => { delete state.hiddenEdges[k]; });
+    if (record !== false) pushHistory({ type:'show_edges', keys: list });
+    applyFilters(true);
+    updateEditButtons();
+  }
+
+  function deleteSelectedNodes(){
+    if (!state.network) return;
+    const ids = state.network.getSelectedNodes() || [];
+    if (!ids.length) {
+      alert('Select one or more nodes first, then click Hide node.');
+      return;
+    }
+    hideNodesTemp(ids, true);
+  }
+
+  function hideSelectedEdges(){
+    if (!state.network || !state.edgesDS) return;
+    const eids = state.network.getSelectedEdges() || [];
+    if (!eids.length) {
+      alert('Select one or more edges first, then click Hide edge.');
+      return;
+    }
+    const keys = [];
+    eids.forEach(eid => {
+      const e = state.edgesDS.get(eid);
+      if (!e) return;
+      keys.push(edgePairKey(e.from, e.to));
+    });
+    hideEdgesTemp(keys, true);
+  }
+
+  function hideIsolatedNodes(){
+    if (!state.nodesDS || !state.edgesDS) {
+      alert('Build the chart first.');
+      return;
+    }
+    const degree = {};
+    state.nodesDS.getIds().forEach(id => { degree[String(id)] = 0; });
+    (state.edgesDS.get() || []).forEach(e => {
+      const a = String(e.from), b = String(e.to);
+      if (degree[a] != null) degree[a]++;
+      if (degree[b] != null) degree[b]++;
+    });
+    const ids = Object.keys(degree).filter(id => degree[id] === 0);
+    if (!ids.length) {
+      $('details').textContent = 'No isolated nodes — every visible node has at least one link.';
+      return;
+    }
+    hideNodesTemp(ids, true);
+    $('details').textContent =
+      'Hidden ' + ids.length + ' isolated node(s) with no links to another node.\nUse Undo or Restore hidden to bring them back.';
+  }
+
+  function restoreAllHidden(){
+    const nodeIds = Object.keys(state.hiddenNodes || {});
+    const edgeKeys = Object.keys(state.hiddenEdges || {});
+    if (!nodeIds.length && !edgeKeys.length) return;
+    nodeIds.forEach(id => { delete state.hiddenNodes[id]; });
+    edgeKeys.forEach(k => { delete state.hiddenEdges[k]; });
+    pushHistory({ type:'restore_all', ids: nodeIds, keys: edgeKeys });
+    applyFilters(true);
+    updateEditButtons();
+    const parts = [];
+    if (nodeIds.length) parts.push(nodeIds.length + ' node(s)');
+    if (edgeKeys.length) parts.push(edgeKeys.length + ' edge(s)');
+    $('details').textContent = 'Restored ' + parts.join(' and ') + '.';
+  }
+
+  function undoEdit(){
+    const action = state.history.undo.pop();
+    if (!action) return;
+    if (action.type === 'hide') {
+      action.ids.forEach(id => { delete state.hiddenNodes[id]; });
+      state.history.redo.push(action);
+    } else if (action.type === 'show') {
+      action.ids.forEach(id => { state.hiddenNodes[id] = true; });
+      state.history.redo.push(action);
+    } else if (action.type === 'hide_edges') {
+      (action.keys || []).forEach(k => { delete state.hiddenEdges[k]; });
+      state.history.redo.push(action);
+    } else if (action.type === 'show_edges') {
+      (action.keys || []).forEach(k => { state.hiddenEdges[k] = true; });
+      state.history.redo.push(action);
+    } else if (action.type === 'restore_all') {
+      (action.ids || []).forEach(id => { state.hiddenNodes[id] = true; });
+      (action.keys || []).forEach(k => { state.hiddenEdges[k] = true; });
+      state.history.redo.push(action);
+    }
+    applyFilters(true);
+    updateEditButtons();
+  }
+
+  function redoEdit(){
+    const action = state.history.redo.pop();
+    if (!action) return;
+    if (action.type === 'hide') {
+      action.ids.forEach(id => { state.hiddenNodes[id] = true; });
+      state.history.undo.push(action);
+    } else if (action.type === 'show') {
+      action.ids.forEach(id => { delete state.hiddenNodes[id]; });
+      state.history.undo.push(action);
+    } else if (action.type === 'hide_edges') {
+      (action.keys || []).forEach(k => { state.hiddenEdges[k] = true; });
+      state.history.undo.push(action);
+    } else if (action.type === 'show_edges') {
+      (action.keys || []).forEach(k => { delete state.hiddenEdges[k]; });
+      state.history.undo.push(action);
+    } else if (action.type === 'restore_all') {
+      (action.ids || []).forEach(id => { delete state.hiddenNodes[id]; });
+      (action.keys || []).forEach(k => { delete state.hiddenEdges[k]; });
+      state.history.undo.push(action);
+    }
+    applyFilters(true);
+    updateEditButtons();
+  }
+
+  $('btnUndo').onclick = undoEdit;
+  $('btnRedo').onclick = redoEdit;
+  $('btnDeleteNode').onclick = deleteSelectedNodes;
+  $('btnHideEdge').onclick = hideSelectedEdges;
+  $('btnHideIsolated').onclick = hideIsolatedNodes;
+  $('btnRestoreHidden').onclick = restoreAllHidden;
+
+  document.addEventListener('keydown', e => {
+    const tag = (e.target && e.target.tagName || '').toLowerCase();
+    if (tag === 'input' || tag === 'textarea' || tag === 'select' || (e.target && e.target.isContentEditable)) return;
+    const mod = e.ctrlKey || e.metaKey;
+    if (mod && String(e.key).toLowerCase() === 'z' && !e.shiftKey) { e.preventDefault(); undoEdit(); return; }
+    if (mod && (String(e.key).toLowerCase() === 'y' || (String(e.key).toLowerCase() === 'z' && e.shiftKey))) {
+      e.preventDefault(); redoEdit(); return;
+    }
+    if ((e.key === 'Delete' || e.key === 'Backspace') && state.network && !$('edgeModal').classList.contains('open')) {
+      const nodeIds = state.network.getSelectedNodes() || [];
+      const edgeIds = state.network.getSelectedEdges() || [];
+      if (nodeIds.length) { e.preventDefault(); deleteSelectedNodes(); return; }
+      if (edgeIds.length) { e.preventDefault(); hideSelectedEdges(); }
+    }
+  });
+
+  $('btnLabels').onclick=()=>{
+    state.labelMode = state.labelMode==='key'?'all':(state.labelMode==='all'?'none':'key');
+    $('btnLabels').textContent='Labels: '+(state.labelMode==='key'?'KEY':state.labelMode.toUpperCase());
+    applyFilters(true);
+  };
+  $('btnPhysics').onclick=()=>{
+    if (!state.network) return;
+    setPhysicsButton(!state.physicsOn);
+    if (state.physicsOn) {
+      state.network.setOptions({
+        physics: {
+          enabled: true,
+          solver: 'forceAtlas2Based',
+          forceAtlas2Based: {
+            gravitationalConstant: -72,
+            centralGravity: 0.004,
+            springLength: 260,
+            springConstant: 0.045,
+            damping: 0.45,
+            avoidOverlap: 1
+          }
+        }
+      });
+    } else {
+      state.network.setOptions({physics:{enabled:false}});
+    }
+  };
+
+  function exportStamp(){
+    const d = new Date();
+    const pad = n => String(n).padStart(2,'0');
+    return d.getFullYear()+pad(d.getMonth()+1)+pad(d.getDate())+'_'+pad(d.getHours())+pad(d.getMinutes());
+  }
+
+  function downloadBlob(blob, filename){
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = filename;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1500);
+  }
+
+  function nodeFillColor(n){
+    if (n.color && n.color.background) return n.color.background;
+    if (typeof n.color === 'string') return n.color;
+    const map = { target:'#C0392B', common:'#2980B9', exclusive:'#27AE60', imei:'#8E44AD', loc_cell:'#148F77', loc_addr:'#D35400' };
+    return map[n.kind] || '#5D6D7E';
+  }
+
+  function buildCurrentGraphSvg(){
+    if (!state.network || !state.nodesDS) throw new Error('Build the chart first.');
+    const ids = state.nodesDS.getIds();
+    if (!ids.length) throw new Error('No visible nodes to export.');
+    const positions = state.network.getPositions(ids);
+    let minX=Infinity, minY=Infinity, maxX=-Infinity, maxY=-Infinity;
+    const nodes = ids.map(id => {
+      const n = state.nodesDS.get(id);
+      const p = positions[id] || { x:0, y:0 };
+      const size = Number(n.size || 20);
+      minX = Math.min(minX, p.x - size);
+      minY = Math.min(minY, p.y - size);
+      maxX = Math.max(maxX, p.x + size);
+      maxY = Math.max(maxY, p.y + size);
+      return { id, n, x:p.x, y:p.y, size };
+    });
+    const pad = 80;
+    const width = Math.max(400, Math.ceil(maxX - minX + pad * 2));
+    const height = Math.max(300, Math.ceil(maxY - minY + pad * 2));
+    const ox = -minX + pad;
+    const oy = -minY + pad;
+    const escXml = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&apos;'}[c]));
+
+    const edgeParts = [];
+    const edges = state.edgesDS.get() || [];
+    edges.forEach((e, i) => {
+      const a = positions[e.from], b = positions[e.to];
+      if (!a || !b) return;
+      const x1 = a.x + ox, y1 = a.y + oy, x2 = b.x + ox, y2 = b.y + oy;
+      const dx = x2 - x1, dy = y2 - y1;
+      const len = Math.hypot(dx, dy) || 1;
+      const round = (e.smooth && e.smooth.roundness != null) ? Number(e.smooth.roundness) : 0.22;
+      const cw = !(e.smooth && e.smooth.type === 'curvedCCW');
+      const nx = -dy / len, ny = dx / len;
+      const bend = round * len * 0.55 * (cw ? 1 : -1);
+      const cx = (x1 + x2) / 2 + nx * bend;
+      const cy = (y1 + y2) / 2 + ny * bend;
+      const stroke = (e.color && (e.color.color || e.color)) || 'rgba(30,132,73,0.55)';
+      const w = Math.max(1, Number(e.width || 1.2));
+      edgeParts.push(`<path d="M ${x1.toFixed(1)} ${y1.toFixed(1)} Q ${cx.toFixed(1)} ${cy.toFixed(1)} ${x2.toFixed(1)} ${y2.toFixed(1)}" fill="none" stroke="${escXml(stroke)}" stroke-width="${w.toFixed(2)}" stroke-opacity="0.85"/>`);
+      if (e.label) {
+        const lx = (x1 + x2) / 2 + nx * bend * 0.5;
+        const ly = (y1 + y2) / 2 + ny * bend * 0.5;
+        edgeParts.push(`<text x="${lx.toFixed(1)}" y="${ly.toFixed(1)}" text-anchor="middle" font-size="9" font-family="Segoe UI, Tahoma, sans-serif" fill="#2C3E50" stroke="#F7F4EF" stroke-width="3" paint-order="stroke">${escXml(e.label)}</text>`);
+      }
+    });
+
+    const nodeParts = nodes.map(({ n, x, y, size }) => {
+      const px = x + ox, py = y + oy;
+      const fill = nodeFillColor(n);
+      const r = Math.max(8, size * 0.55);
+      const label = String(n.label || n.id || '');
+      let shape = `<circle cx="${px.toFixed(1)}" cy="${py.toFixed(1)}" r="${r.toFixed(1)}" fill="${escXml(fill)}" stroke="#1B2631" stroke-width="1.6"/>`;
+      if (n.kind === 'loc_addr') {
+        shape = `<path d="M ${px.toFixed(1)} ${(py-r).toFixed(1)} c ${(-r*0.9).toFixed(1)} 0 ${(-r).toFixed(1)} ${(r*0.55).toFixed(1)} ${(-r).toFixed(1)} ${(r*0.9).toFixed(1)} 0 ${(r*0.9).toFixed(1)} ${r.toFixed(1)} ${(r*1.9).toFixed(1)} ${r.toFixed(1)} ${(r*1.9).toFixed(1)} s ${r.toFixed(1)} ${(-r).toFixed(1)} ${r.toFixed(1)} ${(-r*1.9).toFixed(1)} c 0 ${(-r*0.35).toFixed(1)} ${(-0.1*r).toFixed(1)} ${(-r*0.9).toFixed(1)} ${(-r).toFixed(1)} ${(-r*0.9).toFixed(1)} z" fill="${escXml(fill)}" stroke="#1B2631" stroke-width="1.4"/><circle cx="${px.toFixed(1)}" cy="${(py-r*0.35).toFixed(1)}" r="${(r*0.28).toFixed(1)}" fill="#fff"/>`;
+      } else if (n.kind === 'loc_cell') {
+        shape = `<circle cx="${px.toFixed(1)}" cy="${py.toFixed(1)}" r="${r.toFixed(1)}" fill="#E8F8F5" stroke="${escXml(fill)}" stroke-width="2"/><rect x="${(px-2).toFixed(1)}" y="${(py-r*0.2).toFixed(1)}" width="4" height="${(r*1.1).toFixed(1)}" fill="${escXml(fill)}"/>`;
+      } else if (n.kind === 'imei') {
+        shape = `<rect x="${(px-r*0.55).toFixed(1)}" y="${(py-r*0.85).toFixed(1)}" width="${(r*1.1).toFixed(1)}" height="${(r*1.7).toFixed(1)}" rx="3" fill="${escXml(fill)}" stroke="#1B2631" stroke-width="1.4"/>`;
+      }
+      const ty = py + r + 12;
+      return `${shape}<text x="${px.toFixed(1)}" y="${ty.toFixed(1)}" text-anchor="middle" font-size="${n.kind==='target'?11:9}" font-family="Segoe UI, Tahoma, sans-serif" fill="#1B2631" stroke="#F7F4EF" stroke-width="3" paint-order="stroke">${escXml(label)}</text>`;
+    });
+
+    const title = 'CDR i2 relation chart · ' + exportStamp();
+    return `<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">
+  <rect width="100%" height="100%" fill="#F7F4EF"/>
+  <text x="16" y="22" font-size="13" font-family="Segoe UI, Tahoma, sans-serif" fill="#1A5276" font-weight="600">${escXml(title)}</text>
+  <g id="edges">${edgeParts.join('\n')}</g>
+  <g id="nodes">${nodeParts.join('\n')}</g>
+</svg>`;
+  }
+
+  function exportGraphSvg(){
+    try {
+      const svg = buildCurrentGraphSvg();
+      downloadBlob(new Blob([svg], { type: 'image/svg+xml;charset=utf-8' }), 'cdr_graph_' + exportStamp() + '.svg');
+      $('details').textContent = 'Exported current graph as SVG.';
+    } catch (err) {
+      alert(String(err.message || err));
+    }
+  }
+
+  function jpegToPdfBlob(dataUrl, imgW, imgH){
+    const jpeg = atob(dataUrl.split(',')[1] || '');
+    const bytes = new Uint8Array(jpeg.length);
+    for (let i = 0; i < jpeg.length; i++) bytes[i] = jpeg.charCodeAt(i);
+    const pageW = 842, pageH = 595; // A4 landscape
+    const margin = 24;
+    const maxW = pageW - margin * 2, maxH = pageH - margin * 2;
+    const scale = Math.min(maxW / imgW, maxH / imgH);
+    const drawW = imgW * scale, drawH = imgH * scale;
+    const x = (pageW - drawW) / 2, y = (pageH - drawH) / 2;
+    const content = `q\n${drawW.toFixed(2)} 0 0 ${drawH.toFixed(2)} ${x.toFixed(2)} ${y.toFixed(2)} cm\n/Im0 Do\nQ\n`;
+
+    const blocks = [];
+    let pos = 0;
+    const opos = {};
+    const emit = (strOrArr, objNum) => {
+      if (objNum != null) opos[objNum] = pos;
+      const u = typeof strOrArr === 'string' ? new TextEncoder().encode(strOrArr) : strOrArr;
+      blocks.push(u);
+      pos += u.length;
+    };
+    emit('%PDF-1.4\n');
+    emit('1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n', 1);
+    emit('2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n', 2);
+    emit(`3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${pageW} ${pageH}] /Contents 4 0 R /Resources << /XObject << /Im0 5 0 R >> >> >>\nendobj\n`, 3);
+    emit(`4 0 obj\n<< /Length ${content.length} >>\nstream\n${content}endstream\nendobj\n`, 4);
+    emit(`5 0 obj\n<< /Type /XObject /Subtype /Image /Width ${imgW} /Height ${imgH} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length ${bytes.length} >>\nstream\n`, 5);
+    emit(bytes);
+    emit('\nendstream\nendobj\n');
+    const xrefPos = pos;
+    let xrefStr = 'xref\n0 6\n0000000000 65535 f \n';
+    for (let i = 1; i <= 5; i++) xrefStr += String(opos[i]).padStart(10, '0') + ' 00000 n \n';
+    emit(xrefStr);
+    emit(`trailer\n<< /Size 6 /Root 1 0 R >>\nstartxref\n${xrefPos}\n%%EOF`);
+
+    let totalLen = 0;
+    blocks.forEach(b => { totalLen += b.length; });
+    const outBuf = new Uint8Array(totalLen);
+    let o = 0;
+    blocks.forEach(b => { outBuf.set(b, o); o += b.length; });
+    return new Blob([outBuf], { type: 'application/pdf' });
+  }
+
+  async function exportGraphPdf(){
+    try {
+      if (!state.network || !state.nodesDS || !state.nodesDS.getIds().length) {
+        throw new Error('Build the chart first.');
+      }
+      const svg = buildCurrentGraphSvg();
+      const svgBlob = new Blob([svg], { type: 'image/svg+xml;charset=utf-8' });
+      const url = URL.createObjectURL(svgBlob);
+      const img = new Image();
+      await new Promise((resolve, reject) => {
+        img.onload = resolve;
+        img.onerror = () => reject(new Error('Failed to rasterize SVG for PDF.'));
+        img.src = url;
+      });
+      const canvas = document.createElement('canvas');
+      canvas.width = img.naturalWidth || img.width;
+      canvas.height = img.naturalHeight || img.height;
+      const ctx = canvas.getContext('2d');
+      ctx.fillStyle = '#F7F4EF';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.drawImage(img, 0, 0);
+      URL.revokeObjectURL(url);
+      const jpeg = canvas.toDataURL('image/jpeg', 0.93);
+      const pdfBlob = jpegToPdfBlob(jpeg, canvas.width, canvas.height);
+      downloadBlob(pdfBlob, 'cdr_graph_' + exportStamp() + '.pdf');
+      $('details').textContent = 'Exported current graph as PDF.';
+    } catch (err) {
+      alert(String(err.message || err));
+    }
+  }
+
+  $('btnExportSvg').onclick = exportGraphSvg;
+  $('btnExportPdf').onclick = () => { exportGraphPdf(); };
+
+  function isMobileLayout(){
+    return window.matchMedia('(max-width: 900px)').matches;
+  }
+  function setPanelOpen(open){
+    const app = $('app');
+    app.classList.toggle('panel-open', !!open);
+    const btn = $('btnPanel');
+    if (btn) {
+      btn.textContent = '☰ Panel';
+      btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+    }
+    if (state.network) {
+      setTimeout(() => {
+        try { state.network.redraw(); } catch (_) {}
+      }, 240);
+    }
+  }
+  $('btnPanel').onclick = () => setPanelOpen(true);
+  $('btnClosePanel').onclick = () => setPanelOpen(false);
+  $('panelScrim').onclick = () => setPanelOpen(false);
+  window.addEventListener('resize', () => {
+    if (!isMobileLayout()) setPanelOpen(false);
+    if (state.network) {
+      try { state.network.redraw(); } catch (_) {}
+    }
+  });
+  document.addEventListener('keydown', e => {
+    if (e.key === 'Escape' && $('app').classList.contains('panel-open')) setPanelOpen(false);
+  });
+
+  function esc(s){ return String(s??'').replace(/[&<>"']/g,c=>({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c])); }
+  function escAttr(s){ return esc(s).replace(/\n/g,' '); }
+
+  populateNodeIconSelect();
+
+  // Auto-load previously saved mapped files from IndexedDB (migrates old localStorage if needed)
+  (async () => {
+    await loadDatasetsFromStorage(true);
+    renderFileList();
+    if (state.datasets.length) {
+      $('details').textContent =
+        `Restored ${state.datasets.length} file(s) from IndexedDB.\nClick Build / Refresh chart to continue.`;
+    }
+  })();
+})();
+</script>
+</body>
+</html>
+"""
+
+
+def main():
+    import shutil
+
+    from export_heatmap import write_heatmap
+
+    ensure(VIS_JS, VIS_URL, 100_000)
+    ensure(XLSX_JS, XLSX_URL, 100_000)
+
+    out = OUT_DIR / "cdr_i2_analyzer.html"
+    out.write_text(HTML, encoding="utf-8")
+
+    docs_vendor = DOCS_DIR / "vendor"
+    docs_vendor.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(VIS_JS, docs_vendor / VIS_JS.name)
+    shutil.copy2(XLSX_JS, docs_vendor / XLSX_JS.name)
+
+    # GitHub Pages site root
+    docs_html = DOCS_DIR / "index.html"
+    docs_html.write_text(HTML, encoding="utf-8")
+
+    # Remove legacy filename so docs/ only serves index.html
+    legacy = DOCS_DIR / "cdr_i2_analyzer.html"
+    if legacy.exists():
+        legacy.unlink()
+
+    heat = write_heatmap()
+
+    print(f"HTML: {out}")
+    print(f"DOCS: {docs_html}")
+    print(f"HEAT: {heat}")
+    print(f"VIS : {VIS_JS} ({VIS_JS.stat().st_size})")
+    print(f"XLSX: {XLSX_JS} ({XLSX_JS.stat().st_size})")
+
+
+if __name__ == "__main__":
+    main()
