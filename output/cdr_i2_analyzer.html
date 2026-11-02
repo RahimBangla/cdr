@@ -197,7 +197,7 @@ main{position:relative;min-width:0;min-height:0}
         <select id="sheetSelect"></select>
       </div>
       <div class="row">
-        <label>Target / Subject MSISDN (optional override)</label>
+        <label>Target / Subject MSISDN (optional override; ignored when the A-party column has several numbers: each becomes its own subject)</label>
         <input id="targetOverride" type="text" placeholder="Auto from sheet name / APARTY most common"/>
       </div>
       <div class="mapgrid" id="mapGrid"></div>
@@ -240,10 +240,6 @@ main{position:relative;min-width:0;min-height:0}
         <button id="btnApplyTime" class="primary" type="button">Apply</button>
         <button id="btnResetTime" type="button">Full range</button>
       </div>
-      <div class="btns" style="margin-top:6px">
-        <button id="btnExportRows" type="button" title="All original CDR columns, rows inside the date/time + usage filter, all files combined">Export filtered rows (XLSX)</button>
-        <button id="btnExportRowsCsv" type="button">CSV</button>
-      </div>
       <div class="hint" id="timeHint">Build chart first</div>
     </div>
 
@@ -278,6 +274,15 @@ main{position:relative;min-width:0;min-height:0}
         <label><input type="checkbox" id="f_loc_addr" checked> Pin icon — Common Address (orange)</label>
       </div>
       <div class="hint" id="detectHint">Common IMEI / location detected after Build.</div>
+    </div>
+
+    <div class="box">
+      <h2>Export filtered rows</h2>
+      <div class="btns">
+        <button id="btnExportRows" class="primary" type="button">Export XLSX</button>
+        <button id="btnExportRowsCsv" type="button">Export CSV</button>
+      </div>
+      <div class="hint">Applies all filters above at once: Date / Time, Usage type, Multi number search (only rows involving the numbers, IMEI, LAC/CI or address you typed) and Node kinds. Every original CDR column, all files combined.</div>
     </div>
 
     <div class="box">
@@ -1604,11 +1609,17 @@ main{position:relative;min-width:0;min-height:0}
     return fromFile ? (normMsisdn(fromFile[0]) || '') : '';
   }
 
+  // Unique subjects of a dataset: normally one, several when its A-party column held several numbers.
+  // Records never change after creation, so the result is cached on the dataset object.
+  function dsTargets(d) {
+    return d._targets || (d._targets = [...new Set((d.records || []).map(r => r.target).filter(Boolean))]);
+  }
+
   function renderFileList() {
     const all = [
       ...state.datasets.map(d => ({
         id: d.id, name: d.name, status: 'ready', removable: true,
-        meta: `${d.records.length} rows · target ${d.target || '-'}${d.savedAt ? ' · saved' : ''}`
+        meta: `${d.records.length} rows · ${dsTargets(d).length > 1 ? dsTargets(d).length + ' subjects (A-party numbers)' : 'target ' + (d.target || '-')}${d.savedAt ? ' · saved' : ''}`
       })),
       ...state.staging.map(s => ({
         id: s.id, name: s.name, status: 'mapping', removable: true,
@@ -1649,7 +1660,7 @@ main{position:relative;min-width:0;min-height:0}
             const d = state.datasets.find(x => x.id === id);
             if (d) {
               $('details').textContent =
-                `File: ${d.name}\nSheet: ${d.sheet}\nTarget: ${d.target}\nRows: ${d.records.length}\n` +
+                `File: ${d.name}\nSheet: ${d.sheet}\nTarget: ${dsTargets(d).join(', ') || d.target}\nRows: ${d.records.length}\n` +
                 `Raw columns saved: ${(d.headers && d.headers.length) ? d.headers.length : 0}\n` +
                 `Saved: ${d.savedAt || '-'}\nMapping: ${JSON.stringify(d.mapping)}`;
             }
@@ -1667,7 +1678,7 @@ main{position:relative;min-width:0;min-height:0}
     });
     $('wsFiles').textContent = state.datasets.length;
     $('wsRecs').textContent = state.datasets.reduce((a,d)=>a+d.records.length,0).toLocaleString();
-    const targets = new Set(state.datasets.map(d => d.target).filter(Boolean));
+    const targets = new Set(state.datasets.flatMap(dsTargets));
     $('wsTargets').textContent = targets.size;
     updateStorageStats();
   }
@@ -1773,11 +1784,16 @@ main{position:relative;min-width:0;min-height:0}
       }));
       apartyCount[aparty] = (apartyCount[aparty] || 0) + 1;
     });
-    let target = normMsisdn(targetOverride);
-    if (!target) {
-      target = Object.keys(apartyCount).sort((a,b)=>apartyCount[b]-apartyCount[a])[0] || '';
+    const aparties = Object.keys(apartyCount).sort((a,b)=>apartyCount[b]-apartyCount[a]);
+    let target = normMsisdn(targetOverride) || aparties[0] || '';
+    if (aparties.length > 1) {
+      // Several A-party numbers in one sheet: every unique number is its own subject (red node), so the
+      // override is ignored. d.target is then only the label of the most frequent one.
+      target = aparties[0];
+      records.forEach(r => { r.target = r.aparty; });
+    } else {
+      records.forEach(r => { r.target = target; });
     }
-    records.forEach(r => { r.target = target; });
     return {
       id,
       name: st.name,
@@ -1816,7 +1832,7 @@ main{position:relative;min-width:0;min-height:0}
     renderMapper();
     $('details').textContent =
       `Imported ${added.length} sheet(s) · ${added.reduce((a, d) => a + d.records.length, 0).toLocaleString()} rows\n` +
-      `Subjects: ${[...new Set(added.map(d => d.target))].join(', ') || '-'}\n` +
+      `Subjects: ${[...new Set(added.flatMap(dsTargets))].join(', ') || '-'}\n` +
       (skipped.length ? `Skipped (map manually):\n  ${skipped.join('\n  ')}\n` : '') +
       (saved.ok ? `Saved to IndexedDB (${storageSizeLabel(saved.size)})\n` : 'WARNING: IndexedDB save failed\n') +
       '\nClick Build / Refresh chart.';
@@ -1891,7 +1907,7 @@ main{position:relative;min-width:0;min-height:0}
       Object.keys(cur).forEach(k => { prior[k] = Math.max(prior[k] || 0, cur[k]); });
     });
     const records = state.rows.map(r => r.rec);
-    const targets = [...new Set(state.datasets.map(d => d.target).filter(Boolean))];
+    const targets = [...new Set(state.rows.map(r => r.rec.target).filter(Boolean))];
     if (!targets.length) throw new Error('No subject/target numbers found. Set target override while mapping.');
 
     const contacts = {};
@@ -2146,14 +2162,17 @@ main{position:relative;min-width:0;min-height:0}
       rings[r].push(n);
     });
     const radii = RING_RADII;
+    // Many subjects (e.g. a sheet whose A-party column holds dozens of numbers) would overlap on the inner
+    // ring, so widen every ring in proportion. Up to 24 subjects the original radii are kept unchanged.
+    const spread = Math.max(1, (rings[0].length * 84 / (2 * Math.PI)) / radii[0]);
     Object.keys(rings).forEach(ring => {
       const members = rings[ring].sort((a,b)=>String(a.id).localeCompare(String(b.id)));
       const count = Math.max(members.length,1);
       const phase = (+ring * 0.28) + (ring>0?0.08:0);
       members.forEach((n,i) => {
         const ang = phase + (2*Math.PI*i/count) - Math.PI/2;
-        n.x = radii[ring] * Math.cos(ang);
-        n.y = radii[ring] * Math.sin(ang);
+        n.x = radii[ring] * spread * Math.cos(ang);
+        n.y = radii[ring] * spread * Math.sin(ang);
         n.baseX = n.x;
         n.baseY = n.y;
         const sp = state.positions[n.id]; // manual placement from an earlier session wins over the ring slot
@@ -2454,6 +2473,17 @@ main{position:relative;min-width:0;min-height:0}
     state._respaceTimer = setTimeout(finish, 4200);
   }
 
+  // Node-kind checkboxes, keyed by the node `kind` values used in the graph. Shared by the chart and the export.
+  function getShowKinds() {
+    return {
+      target:$('f_target').checked,
+      common:$('f_common').checked,
+      exclusive:$('f_exclusive').checked,
+      imei:$('f_imei').checked,
+      loc_cell:$('f_loc_cell').checked,
+      loc_addr:$('f_loc_addr').checked
+    };
+  }
   function getSelectedUsage() {
     const selected = {}; let any=false; const boxes=[...document.querySelectorAll('.usageChk')];
     boxes.forEach(el => { if (el.checked) { selected[el.getAttribute('data-usage')]=true; any=true; } });
@@ -2507,14 +2537,7 @@ main{position:relative;min-width:0;min-height:0}
 
     function applyFilters(keepView){
     if (!state.DATA) return;
-    const show = {
-      target:$('f_target').checked,
-      common:$('f_common').checked,
-      exclusive:$('f_exclusive').checked,
-      imei:$('f_imei').checked,
-      loc_cell:$('f_loc_cell').checked,
-      loc_addr:$('f_loc_addr').checked
-    };
+    const show = getShowKinds();
     const win = getTimeWindow();
     const usageSel = getSelectedUsage();
     const timed=[]; const active={}; let evCount=0, evDur=0;
@@ -3157,24 +3180,63 @@ main{position:relative;min-width:0;min-height:0}
     setLayoutLocked(turningOn);
   };
 
-  // ---- filtered export: every original CDR column for rows inside the date/time + usage filter ----
+  // ---- filtered export: every original CDR column for rows that pass date/time, usage type, number search and node kinds ----
   // Columns each file calls something different (START / START_DTTIME, IMSIA / IMSI ...) are merged under one
   // canonical name so Robi and GP rows line up; every other column keeps its own name (union across files).
   const CANON_COL = { start:'START_DTTIME', aparty:'APARTY', bparty:'BPARTY', duration:'CALL_DURATION', usage:'USAGE_TYPE',
     provider:'PROVIDER_NAME', network:'NETWORK_TYPE', imei:'IMEI', imsi:'IMSI', lac:'LACSTARTA', ci:'CISTARTA',
     address:'ADDRESS', lat:'LATITUDE', lng:'LONGITUDE' };
 
+  // Node kinds a CDR row feeds on the chart: its B-party contact (subject / common / exclusive) and the shared
+  // IMEI, LAC/CI tower or address it carries. Ids mirror the ones buildData() creates, looked up in the node
+  // list the chart was drawn from, so a row only counts as a kind when that node really exists on the chart.
+  function rowKinds(rec, kindById) {
+    const ks = [];
+    const add = id => { const k = kindById[id]; if (k) ks.push(k); };
+    add(rec.bparty);
+    const imei = String(rec.imei || '').trim();
+    if (imei && imei !== '0' && imei.toLowerCase() !== 'none') add('IMEI:' + imei);
+    const lac = String(rec.lac || '').trim(), ci = String(rec.ci || '').trim();
+    if (lac && ci && lac !== '0' && ci !== '0') add('CELL:' + lac + '/' + ci);
+    const addr = String(rec.address || '').trim().replace(/\s+/g, ' ');
+    if (addr.length >= 8) add('ADDR:' + addr.toUpperCase());
+    return ks;
+  }
+
+  // Same matching rules as the chart's multi-number search (digit-normalised for numbers), applied to the
+  // fields that become nodes: subject, A/B-party, IMEI, LAC/CI and address.
+  function rowMatchesSearch(rec, queries) {
+    const nums = [rec.target, rec.aparty, rec.bparty].map(v => String(v || ''));
+    const texts = [rec.imei, (rec.lac || rec.ci) ? rec.lac + '/' + rec.ci : '', rec.address].map(v => String(v || '').toLowerCase());
+    return queries.some(q => {
+      const ql = q.toLowerCase(), qd = normalizeDigits(q);
+      return nums.some(v => v.toLowerCase().includes(ql) || (qd && normalizeDigits(v).includes(qd))) ||
+        texts.some(v => v.includes(ql));
+    });
+  }
+
   function exportFilteredRows(fmt) {
     if (!state.DATA || !state.rows.length) { alert('Build the chart first.'); return; }
     const win = getTimeWindow(), usageSel = getSelectedUsage(), tr = state.DATA.time_range;
+    const queries = getSearchQueries(), show = getShowKinds();
+    const kindById = {};
+    state.rawNodes.forEach(n => { kindById[n.id] = n.kind; });
     // Untouched date inputs = no date filter, so rows with an unparseable start time are kept too.
     const noDate = $('dtFrom').value === tr.min && $('dtTo').value === tr.max;
     const picked = state.rows.filter(({ rec }) => {
       if (!usageSel.map[rec.usage_class || 'OTHER']) return false;
-      if (noDate) return true;
-      if (!rec.start) return false;
-      const t = Math.floor(rec.start.getTime() / 1000);
-      return t >= win.from && t <= win.to;
+      if (!noDate) {
+        if (!rec.start) return false;
+        const t = Math.floor(rec.start.getTime() / 1000);
+        if (t < win.from || t > win.to) return false;
+      }
+      if (queries.length && !rowMatchesSearch(rec, queries)) return false;
+      // Subjects unchecked hides every subject node, so on the chart nothing would be left either.
+      if (!show.target) return false;
+      // Rows that feed no chart node (e.g. shortcode B-party, unshared tower) are not governed by node kinds;
+      // a row that does feed nodes stays while at least one of its kinds is checked.
+      const kinds = rowKinds(rec, kindById);
+      return !kinds.length || kinds.some(k => show[k]);
     });
 
     const cols = ['SOURCE_FILE', 'SHEET', 'TARGET'];
@@ -3194,14 +3256,14 @@ main{position:relative;min-width:0;min-height:0}
     });
 
     picked.sort((a, b) => (a.rec.start || 0) - (b.rec.start || 0));
-    const out = picked.filter(r => dsCols.has(r.d)).map(({ d, i }) => {
+    const out = picked.filter(r => dsCols.has(r.d)).map(({ rec, d, i }) => {
       const row = new Array(cols.length).fill('');
-      row[0] = d.name; row[1] = d.sheet; row[2] = d.target;
+      row[0] = d.name; row[1] = d.sheet; row[2] = rec.target;
       const raw = d.rawMatrix[i];
       dsCols.get(d).forEach((ci, hi) => { row[ci] = raw[hi]; });
       return row;
     });
-    if (!out.length) { alert('No rows match the current date/time + usage filter.'); return; }
+    if (!out.length) { alert('No rows match the current filters (date/time, usage type, number search, node kinds).'); return; }
 
     const base = 'cdr_filtered_' + $('dtFrom').value.replace(/\D/g, '') + '_' + $('dtTo').value.replace(/\D/g, '');
     if (fmt === 'csv') {
@@ -3211,9 +3273,13 @@ main{position:relative;min-width:0;min-height:0}
       XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([cols, ...out]), 'Filtered CDR');
       XLSX.writeFile(wb, base + '.xlsx');
     }
+    const kindsOff = Object.keys(show).filter(k => !show[k]);
     $('details').textContent =
       `Exported ${out.length.toLocaleString()} rows × ${cols.length} columns (${fmt === 'csv' ? 'CSV' : 'XLSX'})\n` +
-      `Window: ${$('dtFrom').value} → ${$('dtTo').value}\nFiles: ${dsCols.size}` +
+      `Filters applied:\n  Date/time: ${$('dtFrom').value} → ${$('dtTo').value}\n` +
+      `  Usage: ${usageSel.all ? 'all types' : Object.keys(usageSel.map).join(', ')}\n` +
+      `  Number search: ${queries.length ? queries.length + ' term(s)' : 'none'}\n` +
+      `  Node kinds hidden: ${kindsOff.length ? kindsOff.join(', ') : 'none'}\nFiles: ${dsCols.size}` +
       (noRaw.size ? `\nSkipped ${noRaw.size} file(s) saved without raw columns — remove and re-import them.` : '');
   }
   $('btnExportRows').onclick = () => exportFilteredRows('xlsx');
