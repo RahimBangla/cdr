@@ -5,8 +5,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
-OUT_DIR = Path(r"C:\Users\rahim\Downloads\cdr\output")
-DOCS_DIR = Path(r"C:\Users\rahim\Downloads\cdr\docs")
+ROOT = Path(__file__).resolve().parent
+OUT_DIR = ROOT / "output"
+DOCS_DIR = ROOT / "docs"
 
 HEATMAP_HTML = r"""<!DOCTYPE html>
 <html lang="en">

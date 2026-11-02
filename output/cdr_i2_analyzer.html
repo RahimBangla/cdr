@@ -180,7 +180,10 @@ main{position:relative;min-width:0;min-height:0}
       <div id="drop" class="drop">Drop XLSX / CSV here<br>or click to browse (multi-select)</div>
       <input id="fileInput" type="file" accept=".xlsx,.xls,.csv,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" multiple hidden />
       <div class="filelist" id="fileList"></div>
-      <div class="hint">Each file needs its own column key mapping before it is added to analysis.</div>
+      <div class="btns" style="margin-top:6px">
+        <button id="btnImportAll" class="primary" type="button">Auto-map &amp; import ALL sheets</button>
+      </div>
+      <div class="hint">One click imports every sheet of every uploaded file (columns auto-detected). Or map a single sheet manually below.</div>
     </div>
 
     <div class="box" id="mapBox" style="display:none">
@@ -214,6 +217,9 @@ main{position:relative;min-width:0;min-height:0}
         <span>Subjects</span><b id="wsTargets">0</b>
         <span>Storage</span><b id="wsStorage">-</b>
       </div>
+      <div class="filters" style="margin-top:8px">
+        <label title="Same subject + A/B party + start time + duration + usage found in more than one file is counted once. Identical rows inside a single file are kept."><input type="checkbox" id="optDedupe" checked> Drop duplicate rows across files (overlapping periods)</label>
+      </div>
       <div class="btns" style="margin-top:8px">
         <button id="btnBuild" class="primary" type="button">Build / Refresh chart</button>
         <button id="btnLoadStorage" type="button">Load storage</button>
@@ -233,6 +239,10 @@ main{position:relative;min-width:0;min-height:0}
       <div class="btns">
         <button id="btnApplyTime" class="primary" type="button">Apply</button>
         <button id="btnResetTime" type="button">Full range</button>
+      </div>
+      <div class="btns" style="margin-top:6px">
+        <button id="btnExportRows" type="button" title="All original CDR columns, rows inside the date/time + usage filter, all files combined">Export filtered rows (XLSX)</button>
+        <button id="btnExportRowsCsv" type="button">CSV</button>
       </div>
       <div class="hint" id="timeHint">Build chart first</div>
     </div>
@@ -315,6 +325,7 @@ main{position:relative;min-width:0;min-height:0}
         <button id="btnRestoreHidden" type="button" disabled title="Show all temporarily hidden nodes and edges">Restore hidden</button>
       </div>
       <div class="toolbar-right">
+        <button id="btnLock" type="button" title="Locked: nodes cannot be moved by mouse. Unlock to drag nodes by hand.">Layout: LOCKED</button>
         <button id="btnFit" class="primary">Fit view</button>
         <button id="btnResetLayout" type="button">Reset layout</button>
         <button id="btnRespace" type="button">Re-space</button>
@@ -384,6 +395,7 @@ main{position:relative;min-width:0;min-height:0}
   const IDB_NAME = 'cdr_i2_analyzer_db';
   const IDB_STORE = 'workspace';
   const IDB_KEY = 'datasets_v2';
+  const POS_KEY = 'positions_v1'; // manual node positions (kept apart so a drag never rewrites the big workspace)
   // Append-only: lat/lng at end so older packed rows still unpack correctly
   const REC_COLS = ['start','aparty','bparty','duration','usage','usage_class','provider','network','imei','imsi','lac','ci','address','source','sheet','target','lat','lng'];
 
@@ -398,6 +410,9 @@ main{position:relative;min-width:0;min-height:0}
     rawEdges: [],
     labelMode: 'key',
     physicsOn: false,
+    layoutLocked: true,   // nodes cannot be dragged until the user unlocks the layout
+    positions: {},        // id -> {x,y} manual placements, persisted in IndexedDB
+    rows: [],             // deduped flat row list {rec, ds, i} used by the chart and the filtered export
     activeStagingId: null,
     modal: { logs: [], edge: null },
     lastSaveBytes: 0,
@@ -517,28 +532,28 @@ main{position:relative;min-width:0;min-height:0}
     });
   }
 
-  function idbPut(value) {
+  function idbPut(value, key = IDB_KEY) {
     return idbOpen().then(db => new Promise((resolve, reject) => {
       const tx = db.transaction(IDB_STORE, 'readwrite');
-      tx.objectStore(IDB_STORE).put(value, IDB_KEY);
+      tx.objectStore(IDB_STORE).put(value, key);
       tx.oncomplete = () => { db.close(); resolve(); };
       tx.onerror = () => { db.close(); reject(tx.error || new Error('IndexedDB write failed')); };
     }));
   }
 
-  function idbGet() {
+  function idbGet(key = IDB_KEY) {
     return idbOpen().then(db => new Promise((resolve, reject) => {
       const tx = db.transaction(IDB_STORE, 'readonly');
-      const req = tx.objectStore(IDB_STORE).get(IDB_KEY);
+      const req = tx.objectStore(IDB_STORE).get(key);
       req.onsuccess = () => { db.close(); resolve(req.result || null); };
       req.onerror = () => { db.close(); reject(req.error || new Error('IndexedDB read failed')); };
     }));
   }
 
-  function idbDelete() {
+  function idbDelete(key = IDB_KEY) {
     return idbOpen().then(db => new Promise((resolve, reject) => {
       const tx = db.transaction(IDB_STORE, 'readwrite');
-      tx.objectStore(IDB_STORE).delete(IDB_KEY);
+      tx.objectStore(IDB_STORE).delete(key);
       tx.oncomplete = () => { db.close(); resolve(); };
       tx.onerror = () => { db.close(); reject(tx.error || new Error('IndexedDB delete failed')); };
     }));
@@ -643,8 +658,9 @@ main{position:relative;min-width:0;min-height:0}
   }
 
   async function clearStorageAndWorkspace() {
-    try { await idbDelete(); } catch (e) {}
+    try { await idbDelete(); await idbDelete(POS_KEY); } catch (e) {}
     try { localStorage.removeItem(LS_KEY); } catch (e) {}
+    state.positions = {};
     state.staging = [];
     state.datasets = [];
     state.DATA = null;
@@ -1707,22 +1723,11 @@ main{position:relative;min-width:0;min-height:0}
     renderMapper();
   };
 
-  $('btnAddMapped').onclick = async () => {
-    const st = currentStaging();
-    if (!st) return;
-    // sync selects
-    $('mapGrid').querySelectorAll('select').forEach(selEl => {
-      st.mapping[selEl.getAttribute('data-key')] = selEl.value;
-    });
-    st.targetOverride = $('targetOverride').value.trim();
-    const m = st.mapping;
-    if (!m.start || !m.aparty || !m.bparty) {
-      showError('Mapping incomplete.\nRequired: start, aparty, bparty');
-      return;
-    }
-    clearError();
-    const sheetHeaders = (st.sheets[st.sheet].headers || []).map(String);
-    const rows = st.sheets[st.sheet].rows;
+  // Turn one sheet + column mapping into a workspace dataset. records[i] <-> rawMatrix[i] stay aligned
+  // (rows without an A-party are skipped from both) so the filtered export can emit every original column.
+  function buildDataset(st, sheet, m, targetOverride, id) {
+    const sheetHeaders = (st.sheets[sheet].headers || []).map(String);
+    const rows = st.sheets[sheet].rows;
     const records = [];
     const rawMatrix = [];
     const apartyCount = {};
@@ -1754,7 +1759,7 @@ main{position:relative;min-width:0;min-height:0}
         lat: m.lat ? parseCoord(row[m.lat]) : null,
         lng: m.lng ? parseCoord(row[m.lng]) : null,
         source: st.name,
-        sheet: st.sheet,
+        sheet,
       };
       // If lat/lng missing, try to parse from address text
       if ((rec.lat == null || rec.lng == null) && rec.address) {
@@ -1768,22 +1773,72 @@ main{position:relative;min-width:0;min-height:0}
       }));
       apartyCount[aparty] = (apartyCount[aparty] || 0) + 1;
     });
-    let target = normMsisdn(st.targetOverride);
+    let target = normMsisdn(targetOverride);
     if (!target) {
       target = Object.keys(apartyCount).sort((a,b)=>apartyCount[b]-apartyCount[a])[0] || '';
     }
     records.forEach(r => { r.target = target; });
-    state.datasets.push({
-      id: st.id,
+    return {
+      id,
       name: st.name,
-      sheet: st.sheet,
+      sheet,
       mapping: Object.assign({}, m),
       target,
       savedAt: new Date().toISOString(),
       records,
       headers: sheetHeaders,
       rawMatrix,
+    };
+  }
+
+  // One click: auto-map + import every sheet of every staged file. A multi-CDR workbook has one sheet per
+  // subject, and the manual flow below only takes one sheet per file. Sheets that cannot be auto-mapped
+  // (no start/A-party/B-party column, or no usable rows) are listed and their file stays staged for manual mapping.
+  $('btnImportAll').onclick = async () => {
+    if (!state.staging.length) { showError('Upload files first.'); return; }
+    clearError();
+    const added = [], skipped = [];
+    state.staging.forEach(st => {
+      st.sheetNames.forEach((sheet, i) => {
+        const m = autoMap(st.sheets[sheet].headers);
+        if (!st.sheets[sheet].rows.length || !m.start || !m.aparty || !m.bparty) { skipped.push(`${st.name} [${sheet}]`); return; }
+        const ds = buildDataset(st, sheet, m, guessTarget(st.name, sheet), st.id + '_' + i);
+        if (!ds.records.length) { skipped.push(`${st.name} [${sheet}] (no A-party rows)`); return; }
+        state.datasets.push(ds);
+        added.push(ds);
+        st._imported = true;
+      });
     });
+    state.staging = state.staging.filter(st => !st._imported);
+    state.activeStagingId = state.staging[0] ? state.staging[0].id : null;
+    const saved = await saveDatasetsToStorage();
+    renderFileList();
+    renderMapper();
+    $('details').textContent =
+      `Imported ${added.length} sheet(s) · ${added.reduce((a, d) => a + d.records.length, 0).toLocaleString()} rows\n` +
+      `Subjects: ${[...new Set(added.map(d => d.target))].join(', ') || '-'}\n` +
+      (skipped.length ? `Skipped (map manually):\n  ${skipped.join('\n  ')}\n` : '') +
+      (saved.ok ? `Saved to IndexedDB (${storageSizeLabel(saved.size)})\n` : 'WARNING: IndexedDB save failed\n') +
+      '\nClick Build / Refresh chart.';
+  };
+
+  $('btnAddMapped').onclick = async () => {
+    const st = currentStaging();
+    if (!st) return;
+    // sync selects
+    $('mapGrid').querySelectorAll('select').forEach(selEl => {
+      st.mapping[selEl.getAttribute('data-key')] = selEl.value;
+    });
+    st.targetOverride = $('targetOverride').value.trim();
+    const m = st.mapping;
+    if (!m.start || !m.aparty || !m.bparty) {
+      showError('Mapping incomplete.\nRequired: start, aparty, bparty');
+      return;
+    }
+    clearError();
+    const ds = buildDataset(st, st.sheet, m, st.targetOverride, st.id);
+    const records = ds.records, target = ds.target;
+    state.datasets.push(ds);
     state.staging = state.staging.filter(x => x.id !== st.id);
     state.activeStagingId = state.staging[0] ? state.staging[0].id : null;
     const saved = await saveDatasetsToStorage();
@@ -1816,8 +1871,26 @@ main{position:relative;min-width:0;min-height:0}
   function buildData() {
     if (!state.datasets.length) throw new Error('No mapped files in workspace.');
     state._addrDisplay = {};
-    const records = [];
-    state.datasets.forEach(d => records.push(...d.records));
+    // Flat row list shared by the chart and the filtered export. Overlapping CDR periods repeat the same event
+    // in two files, so optionally de-duplicate across files as a multiset union: keep the largest number of
+    // identical rows seen in any single file (identical rows inside one file, e.g. multi-part SMS, survive).
+    const dedupe = $('optDedupe').checked;
+    const prior = {};
+    state.rows = [];
+    state.dupDropped = 0;
+    state.datasets.forEach(d => {
+      const cur = {};
+      d.records.forEach((rec, i) => {
+        if (dedupe) {
+          const k = [rec.target, rec.aparty, rec.bparty, rec.start ? rec.start.getTime() : '', rec.duration, rec.usage].join('|');
+          cur[k] = (cur[k] || 0) + 1;
+          if (cur[k] <= (prior[k] || 0)) { state.dupDropped++; return; }
+        }
+        state.rows.push({ rec, d, i });
+      });
+      Object.keys(cur).forEach(k => { prior[k] = Math.max(prior[k] || 0, cur[k]); });
+    });
+    const records = state.rows.map(r => r.rec);
     const targets = [...new Set(state.datasets.map(d => d.target).filter(Boolean))];
     if (!targets.length) throw new Error('No subject/target numbers found. Set target override while mapping.');
 
@@ -2083,6 +2156,8 @@ main{position:relative;min-width:0;min-height:0}
         n.y = radii[ring] * Math.sin(ang);
         n.baseX = n.x;
         n.baseY = n.y;
+        const sp = state.positions[n.id]; // manual placement from an earlier session wins over the ring slot
+        if (sp) { n.x = sp.x; n.y = sp.y; }
       });
     });
 
@@ -2185,7 +2260,8 @@ main{position:relative;min-width:0;min-height:0}
         `Detected: ${s.shared_imei} shared IMEI · ${s.shared_cells} shared LAC/CI · ${s.shared_addrs} shared Address · ${s.common_contacts} common numbers`;
       $('details').textContent =
         `Chart built\nFiles: ${state.datasets.length}\nRecords: ${s.records}\nSubjects: ${state.DATA.targets.join(', ')}\n` +
-        `Common contacts: ${s.common_contacts}\nCommon IMEI: ${s.shared_imei}\nCommon LAC/CI: ${s.shared_cells}\nCommon Address: ${s.shared_addrs}`;
+        `Common contacts: ${s.common_contacts}\nCommon IMEI: ${s.shared_imei}\nCommon LAC/CI: ${s.shared_cells}\nCommon Address: ${s.shared_addrs}` +
+        ($('optDedupe').checked ? `\nDuplicate rows dropped across files: ${state.dupDropped.toLocaleString()}` : '');
       if (isMobileLayout()) setPanelOpen(false);
     } catch (err) {
       showError(String(err.message || err));
@@ -2220,7 +2296,7 @@ main{position:relative;min-width:0;min-height:0}
 
     state.network = new vis.Network($('network'), {nodes: state.nodesDS, edges: state.edgesDS}, {
       autoResize:true, height:'100%', width:'100%',
-      interaction:{hover:true, tooltipDelay:80, dragNodes:true, dragView:true, zoomView:true, navigationButtons:true, multiselect:true},
+      interaction:{hover:true, tooltipDelay:80, dragNodes:!state.layoutLocked, dragView:true, zoomView:true, navigationButtons:true, multiselect:true},
       layout:{improvedLayout:false, randomSeed:42},
       physics:{enabled:false},
       edges:{
@@ -2284,9 +2360,25 @@ main{position:relative;min-width:0;min-height:0}
       const p = pos[id];
       const raw = state.rawNodes.find(n => String(n.id) === String(id));
       if (raw) { raw.x = p.x; raw.y = p.y; }
+      state.positions[id] = {x:p.x, y:p.y};
       updates.push({id, x:p.x, y:p.y});
     });
     if (updates.length && state.nodesDS) state.nodesDS.update(updates);
+    savePositionsSoon();
+  }
+
+  // Positions live under their own IndexedDB key so a drag never rewrites the multi-MB workspace.
+  // A failed write only costs the saved layout (the on-screen one is unaffected), so it is not surfaced.
+  let posTimer = null;
+  function savePositionsSoon() {
+    clearTimeout(posTimer);
+    posTimer = setTimeout(() => { idbPut(state.positions, POS_KEY).catch(() => {}); }, 400);
+  }
+
+  function setLayoutLocked(locked) {
+    state.layoutLocked = !!locked;
+    $('btnLock').textContent = 'Layout: ' + (locked ? 'LOCKED' : 'UNLOCKED');
+    if (state.network) state.network.setOptions({interaction:{dragNodes: !locked}});
   }
 
   function setPhysicsButton(on) {
@@ -2299,6 +2391,8 @@ main{position:relative;min-width:0;min-height:0}
     if (state._respaceTimer) { clearTimeout(state._respaceTimer); state._respaceTimer = null; }
     state.network.setOptions({physics:{enabled:false}});
     setPhysicsButton(false);
+    state.positions = {};
+    savePositionsSoon();
     const updates = state.rawNodes.map(n => {
       const x = (n.baseX != null) ? n.baseX : n.x;
       const y = (n.baseY != null) ? n.baseY : n.y;
@@ -3032,6 +3126,7 @@ main{position:relative;min-width:0;min-height:0}
     if (!state.network) return;
     setPhysicsButton(!state.physicsOn);
     if (state.physicsOn) {
+      setLayoutLocked(false); // live physics moves nodes, so the layout cannot stay locked
       state.network.setOptions({
         physics: {
           enabled: true,
@@ -3048,8 +3143,82 @@ main{position:relative;min-width:0;min-height:0}
       });
     } else {
       state.network.setOptions({physics:{enabled:false}});
+      syncPositionsFromNetwork(); // keep where physics settled, otherwise the next filter change snaps back
     }
   };
+
+  $('btnLock').onclick = () => {
+    const turningOn = !state.layoutLocked;
+    if (turningOn && state.physicsOn && state.network) {
+      state.network.setOptions({physics:{enabled:false}});
+      setPhysicsButton(false);
+      syncPositionsFromNetwork();
+    }
+    setLayoutLocked(turningOn);
+  };
+
+  // ---- filtered export: every original CDR column for rows inside the date/time + usage filter ----
+  // Columns each file calls something different (START / START_DTTIME, IMSIA / IMSI ...) are merged under one
+  // canonical name so Robi and GP rows line up; every other column keeps its own name (union across files).
+  const CANON_COL = { start:'START_DTTIME', aparty:'APARTY', bparty:'BPARTY', duration:'CALL_DURATION', usage:'USAGE_TYPE',
+    provider:'PROVIDER_NAME', network:'NETWORK_TYPE', imei:'IMEI', imsi:'IMSI', lac:'LACSTARTA', ci:'CISTARTA',
+    address:'ADDRESS', lat:'LATITUDE', lng:'LONGITUDE' };
+
+  function exportFilteredRows(fmt) {
+    if (!state.DATA || !state.rows.length) { alert('Build the chart first.'); return; }
+    const win = getTimeWindow(), usageSel = getSelectedUsage(), tr = state.DATA.time_range;
+    // Untouched date inputs = no date filter, so rows with an unparseable start time are kept too.
+    const noDate = $('dtFrom').value === tr.min && $('dtTo').value === tr.max;
+    const picked = state.rows.filter(({ rec }) => {
+      if (!usageSel.map[rec.usage_class || 'OTHER']) return false;
+      if (noDate) return true;
+      if (!rec.start) return false;
+      const t = Math.floor(rec.start.getTime() / 1000);
+      return t >= win.from && t <= win.to;
+    });
+
+    const cols = ['SOURCE_FILE', 'SHEET', 'TARGET'];
+    const colIdx = { SOURCE_FILE: 0, SHEET: 1, TARGET: 2 };
+    const dsCols = new Map();      // dataset -> output column of each of its own headers
+    const noRaw = new Set();       // datasets saved before raw columns were kept: re-import to include them
+    picked.forEach(({ d }) => {
+      if (dsCols.has(d) || noRaw.has(d)) return;
+      if (!d.rawMatrix) { noRaw.add(d); return; }
+      const rename = {};
+      Object.keys(d.mapping || {}).forEach(k => { if (d.mapping[k] && CANON_COL[k]) rename[d.mapping[k]] = CANON_COL[k]; });
+      dsCols.set(d, d.headers.map(h => {
+        const name = rename[h] || h;
+        if (!(name in colIdx)) { colIdx[name] = cols.length; cols.push(name); }
+        return colIdx[name];
+      }));
+    });
+
+    picked.sort((a, b) => (a.rec.start || 0) - (b.rec.start || 0));
+    const out = picked.filter(r => dsCols.has(r.d)).map(({ d, i }) => {
+      const row = new Array(cols.length).fill('');
+      row[0] = d.name; row[1] = d.sheet; row[2] = d.target;
+      const raw = d.rawMatrix[i];
+      dsCols.get(d).forEach((ci, hi) => { row[ci] = raw[hi]; });
+      return row;
+    });
+    if (!out.length) { alert('No rows match the current date/time + usage filter.'); return; }
+
+    const base = 'cdr_filtered_' + $('dtFrom').value.replace(/\D/g, '') + '_' + $('dtTo').value.replace(/\D/g, '');
+    if (fmt === 'csv') {
+      downloadCsvBlob([cols, ...out].map(r => r.map(csvCell).join(',')), base + '.csv');
+    } else {
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([cols, ...out]), 'Filtered CDR');
+      XLSX.writeFile(wb, base + '.xlsx');
+    }
+    $('details').textContent =
+      `Exported ${out.length.toLocaleString()} rows × ${cols.length} columns (${fmt === 'csv' ? 'CSV' : 'XLSX'})\n` +
+      `Window: ${$('dtFrom').value} → ${$('dtTo').value}\nFiles: ${dsCols.size}` +
+      (noRaw.size ? `\nSkipped ${noRaw.size} file(s) saved without raw columns — remove and re-import them.` : '');
+  }
+  $('btnExportRows').onclick = () => exportFilteredRows('xlsx');
+  $('btnExportRowsCsv').onclick = () => exportFilteredRows('csv');
+  $('optDedupe').onchange = () => { if (state.DATA) $('btnBuild').click(); };
 
   function exportStamp(){
     const d = new Date();
@@ -3270,6 +3439,7 @@ main{position:relative;min-width:0;min-height:0}
 
   // Auto-load previously saved mapped files from IndexedDB (migrates old localStorage if needed)
   (async () => {
+    state.positions = (await idbGet(POS_KEY).catch(() => null)) || {};
     await loadDatasetsFromStorage(true);
     renderFileList();
     if (state.datasets.length) {
